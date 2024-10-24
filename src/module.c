@@ -12639,7 +12639,7 @@ int setModuleBoolConfig(ModuleConfig *config, int val, const char **err) {
 
 int setModuleStringConfig(ModuleConfig *config, sds strval, const char **err) {
     RedisModuleString *error = NULL;
-    RedisModuleString *new = createStringObject(strval, sdslen(strval));
+    RedisModuleString *new = createStringObject(strval, strval ? sdslen(strval) : 0);
     int return_code = config->set_fn.set_string(config->name, new, config->privdata, &error);
     propagateErrorString(error, err);
     decrRefCount(new);
