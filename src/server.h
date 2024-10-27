@@ -410,13 +410,6 @@ typedef enum blocking_type {
 #define PROTO_REQ_INLINE 1
 #define PROTO_REQ_MULTIBULK 2
 
-/* LARGEKEYS TYPES */
-typedef enum {
-    LARGEKEY_STR = 0, /* largekeys of type string */
-    LARGEKEY_COLL, /* largekeys of type collection (Ex: set, list) */
-    LARGEKEY_NUM_TYPES
-} largekey_type;
-
 /* Client classes for client limits, currently used only for
  * the max-client-output-buffer limit implementation. */
 #define CLIENT_TYPE_NORMAL 0 /* Normal req-reply clients + MONITORs */
