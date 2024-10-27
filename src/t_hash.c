@@ -551,8 +551,8 @@ SetExRes hashTypeSetExpiryListpack(HashTypeSetEx *ex, sds field,
     if (unlikely(checkAlreadyExpired(expireAt))) {
         propagateHashFieldDeletion(ex->db, ex->key->ptr, field, sdslen(field));
         hashTypeDelete(ex->hashObj, field, 1);
+        
         /* get listpack length */
-
         listpackEx *lpt = ((listpackEx *) ex->hashObj->ptr);
         unsigned long length = lpLength(lpt->lp) / 3;
         updateKeysizesHist(ex->db, getKeySlot(ex->key->ptr), OBJ_HASH, length+1, length); 
