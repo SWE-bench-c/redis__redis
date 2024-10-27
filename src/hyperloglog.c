@@ -1060,10 +1060,10 @@ void hllMergeDense_AVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
         9, 10, 11, -1                            //
     );
 
-    /* Merge the first 32 registers normally 
+    /* Merge the first 8 registers (6 bytes) normally 
      * as the AVX2 algorithm needs 4 padding bytes at the start */
     uint8_t val;
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < 8; i++) {
         HLL_DENSE_GET_REGISTER(val, reg_dense, i);
         if (val > reg_raw[i]) {
             reg_raw[i] = val;
@@ -1095,10 +1095,11 @@ void hllMergeDense_AVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
      * Finally, compute MAX(reg_raw, merged) and STORE it back to reg_raw
      */
 
-    const uint8_t *r = reg_dense + 24 - 4;
-    uint8_t *t = reg_raw + 32;
+    /* Skip 8 registers (6 bytes) */ 
+    const uint8_t *r = reg_dense + 6 - 4;
+    uint8_t *t = reg_raw + 8;
 
-    for (int i = 0; i < HLL_REGISTERS / 32 - 2; ++i) {
+    for (int i = 0; i < HLL_REGISTERS / 32 - 1; ++i) {
         __m256i x0, x;
         x0 = _mm256_loadu_si256((__m256i *)r);
         x = _mm256_shuffle_epi8(x0, shuffle);
@@ -1128,9 +1129,9 @@ void hllMergeDense_AVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
         t += 32;
     }
 
-    /* Merge the last 32 registers normally 
+    /* Merge the last 24 registers normally 
      * as the AVX2 algorithm needs 4 padding bytes at the end */
-    for (int i = HLL_REGISTERS - 32; i < HLL_REGISTERS; i++) {
+    for (int i = HLL_REGISTERS - 24; i < HLL_REGISTERS; i++) {
         HLL_DENSE_GET_REGISTER(val, reg_dense, i);
         if (val > reg_raw[i]) {
             reg_raw[i] = val;
