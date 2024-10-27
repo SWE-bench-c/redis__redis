@@ -8,15 +8,16 @@
 #define MAX_KEYSIZES_BINS 48
 #define MAX_KEYSIZES_TYPES 5 /* static_assert at db.c verifies == OBJ_TYPE_BASIC_MAX */
 
-/* Per dict metadata. Memset zero on init. Managed outside kvstore */
-typedef struct {
-    uint64_t keysizes_hist[MAX_KEYSIZES_TYPES][MAX_KEYSIZES_BINS]; 
-} kvstoreDictMetadata;
-
-/* kvstore metadata. Memset zero on init. Managed outside kvstore */
+/* When creating kvstore with flag `KVSTORE_ALLOC_META_KEYS_HIST`, then kvstore 
+ * alloc and memset struct kvstoreMetadata on init, yet, managed outside kvstore */
 typedef struct {
     uint64_t keysizes_hist[MAX_KEYSIZES_TYPES][MAX_KEYSIZES_BINS];
 } kvstoreMetadata;
+
+/* Like kvstoreMetadata, this one per dict */
+typedef struct {
+    uint64_t keysizes_hist[MAX_KEYSIZES_TYPES][MAX_KEYSIZES_BINS];
+} kvstoreDictMetadata;
 
 typedef struct _kvstore kvstore;
 typedef struct _kvstoreIterator kvstoreIterator;
