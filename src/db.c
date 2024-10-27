@@ -64,30 +64,27 @@ void updateLFU(robj *val) {
  *               [1,2)->0 [2,4)->1 [4,8)->2 [8,16)->3
  */
 void updateKeysizesHist(redisDb *db, int didx, uint32_t type, uint64_t oldLen, uint64_t newLen) {
-    uint64_t dummy_hist[MAX_KEYSIZES_BINS];
-
     serverAssert(unlikely(type < OBJ_TYPE_BASIC_MAX));
 
-    kvstoreDictMetadata *metadata = kvstoreGetDictMetadata(db->keys, didx);
-
-    /* If following key deletion, If it is last one in slot's dict, then 
-     * slot's dict might get released as well. Verify if metadata is available. */
-    uint64_t *dict_hist = (metadata != NULL) ? metadata->keysizes_hist[type] : dummy_hist;
-
-    uint64_t *kvstore_hist = kvstoreGetMetadata(db->keys)->keysizes_hist[type];
+    kvstoreDictMetadata *dictMeta = kvstoreGetDictMetadata(db->keys, didx);
+    kvstoreMetadata *kvstoreMeta = kvstoreGetMetadata(db->keys);
 
     if (oldLen != 0) {
         int old_bin = log2ceil(oldLen);
-        debugServerAssertWithInfo(server.current_client, NULL, old_bin < MAX_KEYSIZES_BINS);
-        dict_hist[old_bin]--;
-        kvstore_hist[old_bin]--;
+        debugServerAssertWithInfo(server.current_client, NULL, old_bin < MAX_KEYSIZES_BINS);        
+        /* If following a key deletion it is last one in slot's dict, then
+         * slot's dict might get released as well. Verify if metadata is not NULL. */
+        if(dictMeta) dictMeta->keysizes_hist[type][old_bin]--;
+        kvstoreMeta->keysizes_hist[type][old_bin]--;
     }
     
     if (newLen != 0) {
         int new_bin = log2ceil(newLen);
         debugServerAssertWithInfo(server.current_client, NULL, new_bin < MAX_KEYSIZES_BINS);
-        dict_hist[new_bin]++;
-        kvstore_hist[new_bin]++;
+        /* If following a key deletion it is last one in slot's dict, then
+         * slot's dict might get released as well. Verify if metadata is not NULL. */
+        if(dictMeta) dictMeta->keysizes_hist[type][new_bin]++;
+        kvstoreMeta->keysizes_hist[type][new_bin]++;
     }
 }
 
