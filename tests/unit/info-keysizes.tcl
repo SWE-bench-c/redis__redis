@@ -20,7 +20,7 @@ proc get_stripped_info {server} {
 #                 Instead of the output of "strings_len_exp_distrib" write "STR". 
 #                 Similarly for LIST, SET, ZSET and HASH. Spaces and newlines are 
 #                 ignored.
-#  waitCond    -  If set to 1, the function wait_for_condition 50x20msec for the 
+#  waitCond    -  If set to 1, the function wait_for_condition 50x50msec for the 
 #                 expOutput to match the actual output. 
 # 
 # (replicaMode) -  Global variable that indicates if the test is running in replica 
@@ -46,7 +46,7 @@ proc run_cmd_verify_hist {cmd expOutput {waitCond 0} } {
     } $expOutput]
                      
     if {$waitCond} {
-         wait_for_condition 50 20 {
+         wait_for_condition 50 50 {
             $expStripped eq [get_stripped_info $server]
          } else {
              fail "Unexpected replica KEYSIZES. Expected: `$expOutput` but got: `$infoStripped`"
@@ -57,7 +57,7 @@ proc run_cmd_verify_hist {cmd expOutput {waitCond 0} } {
     
     # If we are testing `replicaMode` then need to wait for the replica to catch up    
     if {$replicaMode eq 1} {        
-         wait_for_condition 50 20 {
+         wait_for_condition 50 50 {
             $expStripped eq [get_stripped_info $server]
          } else {
              fail "Unexpected replica KEYSIZES. Expected: `$expOutput` but got: `$infoStripped`"
