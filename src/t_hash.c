@@ -2972,7 +2972,7 @@ static ExpireAction onFieldExpire(eItem item, void *ctx) {
     propagateHashFieldDeletion(expCtx->db, dictExpireMeta->key, hf, hfieldlen(hf));
 
     /* update keysizes */
-    unsigned long  l = hashTypeLength(expCtx->hashObj, 0);
+    unsigned long l = hashTypeLength(expCtx->hashObj, 0);
     updateKeysizesHist(expCtx->db, getKeySlot(dictExpireMeta->key), OBJ_HASH, l, l - 1);    
     
     serverAssert(hashTypeDelete(expCtx->hashObj, hf, 0) == 1);

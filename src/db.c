@@ -56,9 +56,10 @@ void updateLFU(robj *val) {
  * 
  * The histogram is a base-2 logarithmic histogram, with 64 bins. The i'th bin 
  * represents the number of keys with a size in the range 2^i and 2^(i+1) 
- * exclusive. oldLen/newLen must be smaller than 2^63. Each data type has its
- * own histogram and it is per database (In addition, there is histogram per 
- * slot for future use).
+ * exclusive. oldLen/newLen must be smaller than 2^48, and if their value 
+ * equals 0, it means that the key is being created/deleted, respectively. Each 
+ * data type has its own histogram and it is per database (In addition, there is 
+ * histogram per slot for future cluster use).
  * 
  * Examples to LEN values and corresponding bins in histogram: 
  *               [1,2)->0 [2,4)->1 [4,8)->2 [8,16)->3

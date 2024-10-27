@@ -6155,12 +6155,13 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         info = sdscatprintf(info, "# Keysizes\r\n");
         
         char *typestr[] = {
-                [OBJ_STRING] = "distrib_strings_sizes",
-                [OBJ_LIST] = "distrib_lists_items",
-                [OBJ_SET] = "distrib_sets_items",
-                [OBJ_ZSET] = "distrib_zsets_items",
-                [OBJ_HASH] = "distrib_hashes_items"
+            [OBJ_STRING] = "distrib_strings_sizes",
+            [OBJ_LIST] = "distrib_lists_items",
+            [OBJ_SET] = "distrib_sets_items",
+            [OBJ_ZSET] = "distrib_zsets_items",
+            [OBJ_HASH] = "distrib_hashes_items"
         };
+        serverAssert(sizeof(typestr)/sizeof(typestr[0]) == OBJ_TYPE_BASIC_MAX);
         
         for (int dbnum = 0; dbnum < server.dbnum; dbnum++) {
             char *expSizeLabels[] = {
@@ -6176,7 +6177,7 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
             if (kvstoreSize(server.db[dbnum].keys) == 0)
                 continue;
             
-            for (int type = 0 ; type < OBJ_TYPE_BASIC_MAX ; type++) {
+            for (int type = 0; type < OBJ_TYPE_BASIC_MAX; type++) {
                 uint64_t *kvstoreHist = kvstoreGetMetadata(server.db[dbnum].keys)->keysizes_hist[type];
                 char buf[10000];
                 int cnt = 0, buflen = 0;
@@ -6189,7 +6190,8 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
                         continue;
                     
                     int res = snprintf(buf + buflen, sizeof(buf) - buflen,
-                                       (cnt == 0) ? "%s=%" PRIu64 : ",%s=%" PRIu64, expSizeLabels[i], kvstoreHist[i]);
+                                       (cnt == 0) ? "%s=%llu" : ",%s=%llu", 
+                                       expSizeLabels[i], (unsigned long long) kvstoreHist[i]);
                     if (res < 0) break;
                     buflen += res;
                     cnt += kvstoreHist[i];

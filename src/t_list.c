@@ -1074,7 +1074,7 @@ void lremCommand(client *c) {
     }
     listTypeReleaseIterator(li);
 
-    if (removed) {        
+    if (removed) {
         long ll = listTypeLength(subject);
         updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_LIST, ll + removed, ll);
         notifyKeyspaceEvent(NOTIFY_LIST,"lrem",c->argv[1],c->db->id);
