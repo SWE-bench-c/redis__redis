@@ -49,10 +49,16 @@ proc run_cmd_verify_hist {cmd expOutput {waitCond 0} } {
          wait_for_condition 50 50 {
             $expStripped eq [get_stripped_info $server]
          } else {
-             fail "Unexpected replica KEYSIZES. Expected: `$expOutput` but got: `$infoStripped`"
+            fail "Unexpected KEYSIZES. Expected: `$expStripped` \
+                but got: `[get_stripped_info $server]`. Failed after command: $cmd"
+
          }                
     } else {
-        assert_equal $expStripped [get_stripped_info $server]
+        set infoStripped  [get_stripped_info $server]
+        if {$expStripped ne $infoStripped} {
+            fail "Unexpected KEYSIZES. Expected: `$expStripped` \
+                but got: `$infoStripped`. Failed after command: $cmd"
+        }
     }
     
     # If we are testing `replicaMode` then need to wait for the replica to catch up    
@@ -60,7 +66,8 @@ proc run_cmd_verify_hist {cmd expOutput {waitCond 0} } {
          wait_for_condition 50 50 {
             $expStripped eq [get_stripped_info $server]
          } else {
-             fail "Unexpected replica KEYSIZES. Expected: `$expOutput` but got: `$infoStripped`"
+            fail "Unexpected replica KEYSIZES. Expected: `$expStripped` \
+                but got: `[get_stripped_info $server]`. Failed after command: $cmd"
          }
     }
 }
@@ -162,7 +169,7 @@ proc test_all_keysizes { {replMode 0} } {
         # EXPIRE 
         run_cmd_verify_hist {$server FLUSHALL} {}
         run_cmd_verify_hist {$server RPUSH l9 1 2 3 4} {db0_LIST:4=1}
-        run_cmd_verify_hist {$server PEXPIRE l9 1} {db0_LIST:4=1}
+        run_cmd_verify_hist {$server PEXPIRE l9 50} {db0_LIST:4=1}
         run_cmd_verify_hist {} {} 1
         # SET overwrites
         run_cmd_verify_hist {$server FLUSHALL} {}
@@ -210,7 +217,7 @@ proc test_all_keysizes { {replMode 0} } {
         # EXPIRE
         run_cmd_verify_hist {$server flushall} {}
         run_cmd_verify_hist {$server SADD s1 1 2 3 4 5 6 7 8} {db0_SET:8=1}
-        run_cmd_verify_hist {$server PEXPIRE s1 1} {db0_SET:8=1}
+        run_cmd_verify_hist {$server PEXPIRE s1 50} {db0_SET:8=1}
         run_cmd_verify_hist {} {} 1
         # SET overwrites
         run_cmd_verify_hist {$server FLUSHALL} {}
@@ -273,7 +280,7 @@ proc test_all_keysizes { {replMode 0} } {
         # EXPIRE
         run_cmd_verify_hist {$server FLUSHALL} {}
         run_cmd_verify_hist {$server ZADD z1 1 a 2 b 3 c 4 d 5 e} {db0_ZSET:4=1}
-        run_cmd_verify_hist {$server PEXPIRE z1 1} {db0_ZSET:4=1}
+        run_cmd_verify_hist {$server PEXPIRE z1 50} {db0_ZSET:4=1}
         run_cmd_verify_hist {} {} 1
         # SET overwrites
         run_cmd_verify_hist {$server FLUSHALL} {}
@@ -298,7 +305,7 @@ proc test_all_keysizes { {replMode 0} } {
         #EXPIRE
         run_cmd_verify_hist {$server FLUSHALL} {}
         run_cmd_verify_hist {$server SET s10 1234567890} {db0_STR:8=1}
-        run_cmd_verify_hist {$server PEXPIRE s10 1} {db0_STR:8=1}
+        run_cmd_verify_hist {$server PEXPIRE s10 50} {db0_STR:8=1}
         run_cmd_verify_hist {} {} 1
         # SET (+overwrite)
         run_cmd_verify_hist {$server FLUSHALL} {}
@@ -349,9 +356,9 @@ proc test_all_keysizes { {replMode 0} } {
             run_cmd_verify_hist {$server HSET h1 f2 1} {db0_HASH:2=1}
             run_cmd_verify_hist {$server HPEXPIREAT h1 1 FIELDS 1 f1} {db0_HASH:1=1}            
             run_cmd_verify_hist {$server HSET h1 f3 1} {db0_HASH:2=1} 
-            run_cmd_verify_hist {$server HPEXPIRE h1 1 FIELDS 1 f2} {db0_HASH:2=1}
+            run_cmd_verify_hist {$server HPEXPIRE h1 50 FIELDS 1 f2} {db0_HASH:2=1}
             run_cmd_verify_hist {} {db0_HASH:1=1} 1
-            run_cmd_verify_hist {$server HPEXPIRE h1 1 FIELDS 1 f3} {db0_HASH:1=1}
+            run_cmd_verify_hist {$server HPEXPIRE h1 50 FIELDS 1 f3} {db0_HASH:1=1}
             run_cmd_verify_hist {} {} 1
         }
     }    
