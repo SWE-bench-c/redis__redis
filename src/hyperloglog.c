@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <math.h>
 
-#if defined (HAVE_AVX2)
+#ifdef HAVE_AVX2
 #include <immintrin.h>
 #endif
 
@@ -1048,7 +1048,7 @@ int hllAdd(robj *o, unsigned char *ele, size_t elesize) {
 #if defined(HAVE_AVX2)
 /* Optimized for the default configuration: 16384 registers of 6 bits each. */
 ATTRIBUTE_TARGET_AVX2
-void hllMergeDense_AVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
+void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
     const __m256i shuffle = _mm256_setr_epi8( //
         4, 5, 6, -1,                             //
         7, 8, 9, -1,                             //
@@ -1208,7 +1208,7 @@ int hllMerge(uint8_t *max, robj *hll) {
 #if defined(HAVE_AVX2)
 /* Optimized for the default configuration: 16384 registers of 6 bits each. */
 ATTRIBUTE_TARGET_AVX2
-void hllDenseCompress_AVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
+void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
     const __m256i shuffle = _mm256_setr_epi8( //
         0, 1, 2,                              //
         4, 5, 6,                              //
