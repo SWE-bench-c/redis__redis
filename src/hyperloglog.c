@@ -1058,14 +1058,14 @@ int hllAdd(robj *o, unsigned char *ele, size_t elesize) {
 ATTRIBUTE_TARGET_AVX2
 void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
     const __m256i shuffle = _mm256_setr_epi8( //
-        4, 5, 6, -1,                             //
-        7, 8, 9, -1,                             //
-        10, 11, 12, -1,                          //
-        13, 14, 15, -1,                          //
-        0, 1, 2, -1,                             //
-        3, 4, 5, -1,                             //
-        6, 7, 8, -1,                             //
-        9, 10, 11, -1                            //
+        4, 5, 6, -1,                          //
+        7, 8, 9, -1,                          //
+        10, 11, 12, -1,                       //
+        13, 14, 15, -1,                       //
+        0, 1, 2, -1,                          //
+        3, 4, 5, -1,                          //
+        6, 7, 8, -1,                          //
+        9, 10, 11, -1                         //
     );
 
     /* Merge the first 8 registers (6 bytes) normally 
@@ -1230,12 +1230,12 @@ void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
         4, 5, 6,                              //
         8, 9, 10,                             //
         12, 13, 14,                           //
-        -1, -1, -1, -1,               //
+        -1, -1, -1, -1,                       //
         0, 1, 2,                              //
         4, 5, 6,                              //
         8, 9, 10,                             //
         12, 13, 14,                           //
-        -1, -1, -1, -1                //
+        -1, -1, -1, -1                        //
     );
 
     /* Raw to Dense:
