@@ -1142,10 +1142,10 @@ void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
 
 /* Merge dense-encoded registers to raw registers array. */
 void hllMergeDense(uint8_t* reg_raw, const uint8_t* reg_dense) {
-#if defined (HAVE_AVX2)
+#ifdef HAVE_AVX2
     if (HLL_REGISTERS == 16384 && HLL_BITS == 6) {
         if (__builtin_cpu_supports("avx2")) {
-            hllMergeDense_AVX2(reg_raw, reg_dense);
+            hllMergeDenseAVX2(reg_raw, reg_dense);
             return;
         }
     }
@@ -1291,10 +1291,10 @@ void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
 
 /* Compress raw registers to dense representation. */
 void hllDenseCompress(uint8_t *reg_dense, const uint8_t *reg_raw) {
-#if defined (HAVE_AVX2)
+#ifdef HAVE_AVX2
     if (HLL_REGISTERS == 16384 && HLL_BITS == 6) {
         if (__builtin_cpu_supports("avx2")) {
-            hllDenseCompress_AVX2(reg_dense, reg_raw);
+            hllDenseCompressAVX2(reg_dense, reg_raw);
             return;
         }
     }
