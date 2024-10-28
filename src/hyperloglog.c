@@ -1046,7 +1046,15 @@ int hllAdd(robj *o, unsigned char *ele, size_t elesize) {
 }
 
 #ifdef HAVE_AVX2
-/* Optimized for the default configuration: 16384 registers of 6 bits each. */
+/* A specialized version of hllMergeDense, optimized for default configurations.
+ * 
+ * Requirements:
+ * 1) HLL_REGISTERS == 16384 && HLL_BITS == 6
+ * 2) The CPU supports AVX2 (checked at runtime in hllMergeDense)
+ *
+ * reg_raw: pointer to the raw representation array (16384 bytes, one byte per register)
+ * reg_dense: pointer to the dense representation array (12288 bytes, 6 bits per register)
+ */
 ATTRIBUTE_TARGET_AVX2
 void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
     const __m256i shuffle = _mm256_setr_epi8( //
@@ -1206,7 +1214,15 @@ int hllMerge(uint8_t *max, robj *hll) {
 }
 
 #ifdef HAVE_AVX2
-/* Optimized for the default configuration: 16384 registers of 6 bits each. */
+/* A specialized version of hllDenseCompress, optimized for default configurations.
+ * 
+ * Requirements:
+ * 1) HLL_REGISTERS == 16384 && HLL_BITS == 6
+ * 2) The CPU supports AVX2 (checked at runtime in hllDenseCompress)
+ *
+ * reg_dense: pointer to the dense representation array (12288 bytes, 6 bits per register)
+ * reg_raw: pointer to the raw representation array (16384 bytes, one byte per register)
+ */
 ATTRIBUTE_TARGET_AVX2
 void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
     const __m256i shuffle = _mm256_setr_epi8( //
