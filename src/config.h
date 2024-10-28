@@ -326,9 +326,9 @@ void setcpuaffinity(const char *cpulist);
 #endif
 
 #if defined (HAVE_AVX2)
-    #define ATTRIBUTE_TARGET_AVX2 __attribute__((target("avx2")))
+#define ATTRIBUTE_TARGET_AVX2 __attribute__((target("avx2")))
 #else
-    #define ATTRIBUTE_TARGET_AVX2
+#define ATTRIBUTE_TARGET_AVX2
 #endif
 
 #endif

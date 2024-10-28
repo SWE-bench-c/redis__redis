@@ -1045,7 +1045,7 @@ int hllAdd(robj *o, unsigned char *ele, size_t elesize) {
     }
 }
 
-#if defined(HAVE_AVX2)
+#ifdef HAVE_AVX2
 /* Optimized for the default configuration: 16384 registers of 6 bits each. */
 ATTRIBUTE_TARGET_AVX2
 void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
@@ -1205,7 +1205,7 @@ int hllMerge(uint8_t *max, robj *hll) {
     return C_OK;
 }
 
-#if defined(HAVE_AVX2)
+#ifdef HAVE_AVX2
 /* Optimized for the default configuration: 16384 registers of 6 bits each. */
 ATTRIBUTE_TARGET_AVX2
 void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
