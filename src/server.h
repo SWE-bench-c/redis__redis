@@ -2796,6 +2796,7 @@ int isSdsRepresentableAsLongLong(sds s, long long *llval);
 int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
 robj *tryObjectEncoding(robj *o);
 robj *tryObjectEncodingEx(robj *o, int try_trim);
+size_t getObjectLength(robj *o);
 robj *getDecodedObject(robj *o);
 size_t stringObjectLen(robj *o);
 robj *createStringObjectFromLongLong(long long value);
@@ -3361,8 +3362,6 @@ int setModuleNumericConfig(ModuleConfig *config, long long val, const char **err
 
 /* db.c -- Keyspace access API */
 void updateKeysizesHist(redisDb *db, int didx, uint32_t type, uint64_t oldLen, uint64_t newLen);
-void removeKeysizesHist(redisDb *db, int didx, robj *val);
-void addKeysizesHist(redisDb *db, int didx, robj *val);
 int removeExpire(redisDb *db, robj *key);
 void deleteExpiredKeyAndPropagate(redisDb *db, robj *keyobj);
 void propagateDeletion(redisDb *db, robj *key, int lazy);

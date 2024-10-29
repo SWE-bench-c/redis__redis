@@ -89,36 +89,6 @@ void updateKeysizesHist(redisDb *db, int didx, uint32_t type, uint64_t oldLen, u
     }
 }
 
-/* Remove key statistic from keysizes histogram */
-void removeKeysizesHist(redisDb *db, int didx, robj *val) {
-    uint64_t len;
-    switch (val->type)
-    {
-        case OBJ_STRING: len = stringObjectLen(val); break;
-        case OBJ_LIST: len = listTypeLength(val); break;
-        case OBJ_HASH: len = hashTypeLength(val, 0); break;
-        case OBJ_SET: len = setTypeSize(val); break;
-        case OBJ_ZSET: len = zsetLength(val); break;
-        default: return;
-    }
-    updateKeysizesHist(db, didx, val->type, len, 0);
-}
-
-/* Add key statistic to keysizes histogram */
-void addKeysizesHist(redisDb *db, int didx, robj *val) {
-    uint64_t len;
-    switch (val->type)
-    {
-        case OBJ_STRING: len = stringObjectLen(val); break;
-        case OBJ_LIST: len = listTypeLength(val); break;
-        case OBJ_HASH: len = hashTypeLength(val, 0); break;
-        case OBJ_SET: len = setTypeSize(val); break;
-        case OBJ_ZSET: len = zsetLength(val); break;
-        default: return;
-    }
-    updateKeysizesHist(db, didx, val->type, 0, len);
-}
-
 /* Lookup a key for read or write operations, or return NULL if the key is not
  * found in the specified DB. This function implements the functionality of
  * lookupKeyRead(), lookupKeyWrite() and their ...WithFlags() variants.
@@ -278,7 +248,7 @@ static dictEntry *dbAddInternal(redisDb *db, robj *key, robj *val, int update_if
     kvstoreDictSetVal(db->keys, slot, de, val);
     signalKeyAsReady(db, key, val->type);
     notifyKeyspaceEvent(NOTIFY_NEW,"new",key,db->id);
-    addKeysizesHist(db, slot, val);
+    updateKeysizesHist(db, slot, val->type, 0, getObjectLength(val)); /* add hist */
     return de;
 }
 
@@ -324,7 +294,7 @@ int dbAddRDBLoad(redisDb *db, sds key, robj *val) {
     int slot = getKeySlot(key);
     dictEntry *de = kvstoreDictAddRaw(db->keys, slot, key, NULL);
     if (de == NULL) return 0;
-    addKeysizesHist(db, slot, val);
+    updateKeysizesHist(db, slot, val->type, 0, getObjectLength(val)); /* add hist */
     initObjectLRUOrLFU(val);
     kvstoreDictSetVal(db->keys, slot, de, val);
     return 1;
@@ -349,7 +319,7 @@ static void dbSetValue(redisDb *db, robj *key, robj *val, int overwrite, dictEnt
     robj *old = dictGetVal(de);
 
     /* Remove old key from keysizes histogram */
-    removeKeysizesHist(db, slot, old); 
+    updateKeysizesHist(db, slot, old->type, getObjectLength(old), 0); /* remove hist */
 
     val->lru = old->lru;
 
@@ -370,7 +340,7 @@ static void dbSetValue(redisDb *db, robj *key, robj *val, int overwrite, dictEnt
     kvstoreDictSetVal(db->keys, slot, de, val);
 
     /* Add new key to keysizes histogram */
-    addKeysizesHist(db, slot, val);
+    updateKeysizesHist(db, slot, val->type, 0, getObjectLength(val));
 
     /* if hash with HFEs, take care to remove from global HFE DS */
     if (old->type == OBJ_HASH)
@@ -486,7 +456,8 @@ int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
     if (de) {
         robj *val = dictGetVal(de);
 
-        removeKeysizesHist(db, slot, val);       
+        /* remove key from histogram */
+        updateKeysizesHist(db, slot, val->type, getObjectLength(val), 0);
 
         /* If hash object with expiry on fields, remove it from HFE DS of DB */
         if (val->type == OBJ_HASH)
