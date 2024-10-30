@@ -1586,9 +1586,9 @@ void pfmergeCommand(client *c) {
         for (j = 0; j < HLL_REGISTERS; j++) {
             if (max[j] == 0) continue;
             hdr = o->ptr;
-            switch(hdr->encoding) {
-            case HLL_DENSE: hllDenseSet(hdr->registers,j,max[j]); break;
-            case HLL_SPARSE: hllSparseSet(o,j,max[j]); break;
+            switch (hdr->encoding) {
+                case HLL_DENSE: hllDenseSet(hdr->registers,j,max[j]); break;
+                case HLL_SPARSE: hllSparseSet(o,j,max[j]); break;
             }
         }
     }
