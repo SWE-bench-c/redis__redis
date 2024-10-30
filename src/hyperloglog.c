@@ -1091,11 +1091,14 @@ void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
      * {AAA0|BBB0|CCC0|DDD0|EEE0|FFF0|GGG0|HHH0}
      * {bbaaaaaa|ccccbbbb|ddddddcc|00000000} x8
      *
+     * AVX2 is little endian, each of the 8 groups is a little-endian int32.
+     * A group (int32) contains 3 valid bytes (4 registers) and a zero byte.
+     * 
      * extract registers in each group with AND and SHIFT:
-     * {00aaaaaa|00000000|00000000|00000000} x8
-     * {00000000|00bbbbbb|00000000|00000000} x8
-     * {00000000|00000000|00cccccc|00000000} x8
-     * {00000000|00000000|00000000|00dddddd} x8
+     * {00aaaaaa|00000000|00000000|00000000} x8 (<<0)
+     * {00000000|00bbbbbb|00000000|00000000} x8 (<<2)
+     * {00000000|00000000|00cccccc|00000000} x8 (<<4)
+     * {00000000|00000000|00000000|00dddddd} x8 (<<6)
      *
      * merge the extracted registers with OR:
      * {00aaaaaa|00bbbbbb|00cccccc|00dddddd} x8
@@ -1243,11 +1246,14 @@ void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
      * LOAD 32 bytes (32 registers) per iteration:
      * {00aaaaaa|00bbbbbb|00cccccc|00dddddd} x8
      *
+     * AVX2 is little endian, each of the 8 groups is a little-endian int32.
+     * A group (int32) contains 4 registers.
+     * 
      * move the registers to correct positions with AND and SHIFT:
-     * {00aaaaaa|00000000|00000000|00000000} x8
-     * {bb000000|0000bbbb|00000000|00000000} x8
-     * {00000000|cccc0000|000000cc|00000000} x8
-     * {00000000|00000000|dddddd00|00000000} x8
+     * {00aaaaaa|00000000|00000000|00000000} x8 (>>0)
+     * {bb000000|0000bbbb|00000000|00000000} x8 (>>2)
+     * {00000000|cccc0000|000000cc|00000000} x8 (>>4)
+     * {00000000|00000000|dddddd00|00000000} x8 (>>6)
      *
      * merge the registers with OR:
      * {bbaaaaaa|ccccbbbb|ddddddcc|00000000} x8
