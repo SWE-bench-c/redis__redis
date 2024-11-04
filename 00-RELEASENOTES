@@ -13,6 +13,27 @@ SECURITY: There are security fixes in the release.
 
 
 ================================================================================
+Redis Community Edition 7.4.2    Released Thu 16 May 2024 12:00:00 IST
+================================================================================
+
+Upgrade urgency MODERATE: Program an upgrade of the server, but it's not urgent.
+
+### Bug fixes
+
+* #13338 Fix incorrect lag field in `XINFO` when tombstone is after the `last_id` of the consume group
+* #13470 On `HDEL` of last field - update the global hash field expiration data structure
+* #13473 Fix incorrect lag due to trimming stream via `XTRIM` command
+* #13476 Fix a race condition in the `cache_memory` of `functionsLibCtx`
+* #13626 Fix memory leak on rdbload error
+* #13539 Hash: Fix key ref for a hash that no longer has fields with expiration on `RENAME`/`MOVE`/`SWAPDB`/`RESTORE`
+* #13627 Modules: defrag CB should take robj, not sds
+* #13422 Cluster: Fix `CLUSTER SHARDS` command returns empty array
+* #13443 Cluster: Ensure validity of myself when loading cluster config
+* #13465 Cluster: Pass extensions to node if extension processing is handled by it
+* #13608 Cluster: Fix `GET #` option in `SORT` command
+
+
+================================================================================
 Redis Community Edition 7.4.1    Released Wed 02 Oct 2024 20:17:04 IDT
 ================================================================================
 
