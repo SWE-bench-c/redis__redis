@@ -26,6 +26,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE. */
 
+#include <stdlib.h>
 #include "crc64.h"
 #include "crcspeed.h"
 #include "redisassert.h"
