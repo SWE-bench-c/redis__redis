@@ -1116,7 +1116,7 @@ void _serverAssertPrintClientInfo(const client *c) {
     int j;
     char conninfo[CONN_INFO_LEN];
     struct redisCommand *cmd = NULL;
-    struct cmdToken tokens = {0};
+    struct cmdToken tokens = {{0}};
 
     bugReportStart();
     serverLog(LL_WARNING,"=== ASSERTION FAILED CLIENT CONTEXT ===");
@@ -2109,7 +2109,7 @@ void logCurrentClient(client *cc, const char *title) {
     sds client;
     int j;
     struct redisCommand *cmd = NULL;
-    struct cmdToken tokens = {0};
+    struct cmdToken tokens = {{0}};
 
     serverLog(LL_WARNING|LL_RAW, "\n------ %s CLIENT INFO ------\n", title);
     client = catClientInfoString(sdsempty(),cc);
