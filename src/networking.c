@@ -2244,6 +2244,7 @@ void unprotectClient(client *c) {
  * have a well formed command. The function also returns C_ERR when there is
  * a protocol error: in such a case the client structure is setup to reply
  * with the error and close the connection. */
+#define ARGV_CACHE_THRESHOLD 32
 int processInlineBuffer(client *c) {
     char *newline;
     int argc, j, linefeed_chars = 1;
@@ -2304,7 +2305,7 @@ int processInlineBuffer(client *c) {
     if (argc) {
         /* Check if the current argument array is either too small
          * or excessively large, and needs create new argv. */
-        if (argc > c->argv_len || c->argv_len > argc * 2) {
+        if (argc > c->argv_len || (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > argc * 2)) {
             zfree(c->argv);
             c->argv = zmalloc(sizeof(robj*)*argc);
             c->argv_len = argc;
@@ -2410,7 +2411,9 @@ int processMultibulkBuffer(client *c) {
         c->multibulklen = ll;
 
         /* Setup argv array on client structure */
-        if (c->multibulklen > c->argv_len || c->argv_len > c->multibulklen * 2) {
+        if (c->multibulklen > c->argv_len ||
+            (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > c->multibulklen * 2))
+        {
             zfree(c->argv);
             c->argv_len = min(c->multibulklen, 1024);
             c->argv = zmalloc(sizeof(robj*)*c->argv_len);
@@ -2635,6 +2638,7 @@ int processPendingCommandAndInputBuffer(client *c) {
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process.
  * return C_ERR in case the client was freed during the processing */
+#define ARGV_REBUILD_THRESHOLD 32
 int processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
     while(c->qb_pos < sdslen(c->querybuf)) {
