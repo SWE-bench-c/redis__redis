@@ -787,7 +787,7 @@ int clientsCronResizeQueryBuffer(client *c) {
 /* If the client has been idle for too long, free the client's arguments. */
 int clientsCronFreeArgv(client *c) {
     /* If the arguments have already been freed or are still in use, exit ASAP. */
-    if (!c->argv || !c->argc) return 0;
+    if (!c->argv || c->argc) return 0;
     time_t idletime = server.unixtime - c->lastinteraction;
     if (idletime > 2) {
         c->argv_len = 0;
