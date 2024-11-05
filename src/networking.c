@@ -2302,6 +2302,8 @@ int processInlineBuffer(client *c) {
 
     /* Setup argv array on client structure */
     if (argc) {
+        /* Check if the current argument array is either too small
+         * or excessively large, and needs create new argv. */
         if (argc > c->argv_len || c->argv_len > argc * 2) {
             zfree(c->argv);
             c->argv = zmalloc(sizeof(robj*)*argc);

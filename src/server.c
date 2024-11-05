@@ -784,6 +784,17 @@ int clientsCronResizeQueryBuffer(client *c) {
     return 0;
 }
 
+/* If the client has been idle for too long, free the client's arguments. */
+int clientsCronFreeArgv(client *c) {
+    time_t idletime = server.unixtime - c->lastinteraction;
+    if (idletime > 2) {
+        c->argv_len = 0;
+        zfree(c->argv);
+        c->argv = NULL;
+    }
+    return 0;
+}
+
 /* The client output buffer can be adjusted to better fit the memory requirements.
  *
  * the logic is:
@@ -1050,6 +1061,7 @@ void clientsCron(void) {
          * terminated. */
         if (clientsCronHandleTimeout(c,now)) continue;
         if (clientsCronResizeQueryBuffer(c)) continue;
+        if (clientsCronFreeArgv(c)) continue;
         if (clientsCronResizeOutputBuffer(c,now)) continue;
 
         if (clientsCronTrackExpansiveClients(c, curr_peak_mem_usage_slot)) continue;
