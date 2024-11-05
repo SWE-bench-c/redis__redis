@@ -2638,7 +2638,6 @@ int processPendingCommandAndInputBuffer(client *c) {
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process.
  * return C_ERR in case the client was freed during the processing */
-#define ARGV_REBUILD_THRESHOLD 32
 int processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
     while(c->qb_pos < sdslen(c->querybuf)) {
