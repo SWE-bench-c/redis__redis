@@ -1078,8 +1078,23 @@ void addReplyBulkLen(client *c, robj *obj) {
 
 /* Add a Redis Object as a bulk reply */
 void addReplyBulk(client *c, robj *obj) {
-    addReplyBulkLen(c,obj);
-    addReply(c,obj);
+    if (prepareClientToWrite(c) != C_OK) return;
+
+    if (sdsEncodedObject(obj)) {
+        const size_t len = sdslen(obj->ptr);
+        _addReplyLongLongBulk(c, len);
+        _addReplyToBufferOrList(c,obj->ptr,len);
+    } else if (obj->encoding == OBJ_ENCODING_INT) {
+        /* For integer encoded strings we just convert it into a string
+         * using our optimized function, and attach the resulting string
+         * to the output buffer. */
+        char buf[32];
+        size_t len = ll2string(buf,sizeof(buf),(long)obj->ptr);
+        _addReplyLongLongBulk(c, len);
+        _addReplyToBufferOrList(c,buf,len);
+    } else {
+        serverPanic("Wrong obj->encoding in addReply()");
+    }
     addReplyProto(c,"\r\n",2);
 }
 
