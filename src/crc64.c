@@ -224,7 +224,7 @@ int crc64Test(int argc, char *argv[], int flags) {
     UNUSED(flags);
 
     uint64_t crc64_test_size = 0;
-    int i, lastarg, csv = 0, loop = 0, combine = 0;
+    int i, lastarg, csv = 0, loop = 0, combine = 0, accurate = 0;
 again:
     for (i = 3; i < argc; i++) {
         lastarg = (i == (argc-1));
@@ -239,6 +239,8 @@ again:
             crc64_test_size = atoll(argv[++i]);
         } else if (!strcmp(argv[i],"--combine")) {
             combine = 1;
+        } else if (!strcmp(argv[i],"--accurate")) {
+            accurate = 1;
         } else {
 invalid:
             printf("Invalid option \"%s\" or option argument missing\n\n",argv[i]);
@@ -253,6 +255,9 @@ usage:
             return 1;
         }
     }
+    
+    if (accurate)
+        crc64_test_size = 5000000;
 
     if (crc64_test_size == 0 && combine == 0) {
         crc64_init();
@@ -298,7 +303,7 @@ usage:
         set_crc64_cutoffs(crc64_test_size+1, crc64_test_size+1);
         uint64_t expect = crc64(0, data, crc64_test_size);
 
-        if (!combine && crc64_test_size) {
+        if ((!combine || accurate) && crc64_test_size) {
             if (csv && init_this_loop) printf("algorithm,buffer,performance,crc64_matches\n");
 
             /* get the single-character version for single-byte Redis behavior */
@@ -323,7 +328,7 @@ usage:
         }
 
         uint64_t INIT_SIZE = UINT64_C(0xffffffffffffffff);
-        if (combine) {
+        if (combine || accurate) {
             if (init_this_loop) {
                 init_start = _ustime();
                 crc64_combine(
