@@ -22,6 +22,10 @@
 #include <math.h>
 #include <ctype.h>
 
+/* Threshold for reusing client arguments. Arguments below this size are reused.
+ * Larger arguments with excess space are reallocated to save memory. */
+#define ARGV_CACHE_THRESHOLD 32
+
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
@@ -2244,7 +2248,6 @@ void unprotectClient(client *c) {
  * have a well formed command. The function also returns C_ERR when there is
  * a protocol error: in such a case the client structure is setup to reply
  * with the error and close the connection. */
-#define ARGV_CACHE_THRESHOLD 32
 int processInlineBuffer(client *c) {
     char *newline;
     int argc, j, linefeed_chars = 1;
@@ -2303,8 +2306,7 @@ int processInlineBuffer(client *c) {
 
     /* Setup argv array on client structure */
     if (argc) {
-        /* Check if the current argument array is either too small
-         * or excessively large, and needs create new argv. */
+        /* Create new argv if space is insufficient or the new arguments are too large. */
         if (argc > c->argv_len || (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > argc * 2)) {
             zfree(c->argv);
             c->argv = zmalloc(sizeof(robj*)*argc);
@@ -2410,7 +2412,8 @@ int processMultibulkBuffer(client *c) {
 
         c->multibulklen = ll;
 
-        /* Setup argv array on client structure */
+        /* Setup argv array on client structure.
+         * Create new argv if space is insufficient or the new arguments are too large */
         if (c->multibulklen > c->argv_len ||
             (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > c->multibulklen * 2))
         {
