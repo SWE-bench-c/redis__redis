@@ -22,8 +22,9 @@
 #include <math.h>
 #include <ctype.h>
 
-/* Threshold for reusing client arguments. Arguments below this size are reused.
- * Larger arguments with excess space are reallocated to save memory. */
+/* Threshold for reusing client arguments. new client argument is created
+ * if the requested argument size is exceeds the current size, or if it
+ * is smaller than current size but more than twice as large. */
 #define ARGV_CACHE_THRESHOLD 32
 
 static void setProtocolError(const char *errstr, client *c);
