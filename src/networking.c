@@ -2307,7 +2307,9 @@ int processInlineBuffer(client *c) {
     /* Setup argv array on client structure */
     if (argc) {
         /* Create new argv if space is insufficient or the new arguments are too large. */
-        if (argc > c->argv_len || (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > argc * 2)) {
+        if (unlikely(argc > c->argv_len ||
+            (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > argc * 2)))
+        {
             zfree(c->argv);
             c->argv = zmalloc(sizeof(robj*)*argc);
             c->argv_len = argc;
@@ -2414,8 +2416,8 @@ int processMultibulkBuffer(client *c) {
 
         /* Setup argv array on client structure.
          * Create new argv if space is insufficient or the new arguments are too large */
-        if (c->multibulklen > c->argv_len ||
-            (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > c->multibulklen * 2))
+        if (unlikely(c->multibulklen > c->argv_len ||
+            (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > c->multibulklen * 2)))
         {
             zfree(c->argv);
             c->argv_len = min(c->multibulklen, 1024);
