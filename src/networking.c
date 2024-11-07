@@ -22,11 +22,6 @@
 #include <math.h>
 #include <ctype.h>
 
-/* Threshold for reusing client arguments. new client argument is created
- * if the requested argument size is exceeds the current size, or if it
- * is smaller than current size but more than twice as large. */
-#define ARGV_CACHE_THRESHOLD 32
-
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
@@ -2308,9 +2303,7 @@ int processInlineBuffer(client *c) {
     /* Setup argv array on client structure */
     if (argc) {
         /* Create new argv if space is insufficient or the new arguments are too large. */
-        if (unlikely(argc > c->argv_len ||
-            (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > argc * 2)))
-        {
+        if (unlikely(argc > c->argv_len || argc > 1024)) {
             zfree(c->argv);
             c->argv = zmalloc(sizeof(robj*)*argc);
             c->argv_len = argc;
@@ -2417,9 +2410,7 @@ int processMultibulkBuffer(client *c) {
 
         /* Setup argv array on client structure.
          * Create new argv if space is insufficient or the new arguments are too large */
-        if (unlikely(c->multibulklen > c->argv_len ||
-            (c->argv_len > ARGV_CACHE_THRESHOLD && c->argv_len > c->multibulklen * 2)))
-        {
+        if (unlikely(c->multibulklen > c->argv_len || c->argv_len > 1024)) {
             zfree(c->argv);
             c->argv_len = min(c->multibulklen, 1024);
             c->argv = zmalloc(sizeof(robj*)*c->argv_len);
