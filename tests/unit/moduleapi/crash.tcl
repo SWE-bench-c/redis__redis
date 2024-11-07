@@ -64,6 +64,9 @@ if {!$::valgrind} {
     start_server {tags {"modules"}} {
         r module load $testmodule
 
+        # memcheck confuses sanitizer
+        r config set crash-memcheck-enabled no
+
         test {Test command tokens are printed when hide-user-data-from-log is enabled (xadd)} {
             r config set hide-user-data-from-log yes
             catch {r 0 modulecrash.xadd key NOMKSTREAM MAXLEN ~ 1000 * a b}
@@ -82,6 +85,9 @@ if {!$::valgrind} {
 
     start_server {tags {"modules"}} {
         r module load $testmodule
+
+        # memcheck confuses sanitizer
+        r config set crash-memcheck-enabled no
 
         test {Test command tokens are printed when hide-user-data-from-log is enabled (zunion)} {
             r config set hide-user-data-from-log yes
@@ -104,6 +110,9 @@ if {!$::valgrind} {
 
     start_server {tags {"modules"}} {
         r module load $testmodule
+
+        # memcheck confuses sanitizer
+        r config set crash-memcheck-enabled no
 
         test {Test subcommand name is printed when hide-user-data-from-log is enabled} {
             r config set hide-user-data-from-log yes
