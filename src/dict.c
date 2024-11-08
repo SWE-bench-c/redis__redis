@@ -759,14 +759,23 @@ dictEntry *dictFind(dict *d, const void *key)
     for (table = 0; table <= 1; table++) {
         if (table == 0 && (long)idx < d->rehashidx) continue;
         idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+
+        /* Prefetch the bucket at the calculated index */
+        __builtin_prefetch(&d->ht_table[table][idx], 0, 1);
+
         he = d->ht_table[table][idx];
         while(he) {
             void *he_key = dictGetKey(he);
+
+            /* Prefetch the next entry to improve cache efficiency */
+            __builtin_prefetch(dictGetNext(he), 0, 1);
+
             if (key == he_key || cmpFunc(d, key, he_key))
                 return he;
             he = dictGetNext(he);
         }
-        if (!dictIsRehashing(d)) return NULL;
+        /* Use unlikely to optimize branch prediction for the common case */
+        if (unlikely(!dictIsRehashing(d))) return NULL;
     }
     return NULL;
 }
