@@ -2409,7 +2409,7 @@ int processMultibulkBuffer(client *c) {
         c->multibulklen = ll;
 
         /* Setup argv array on client structure.
-         * Create new argv if space is insufficient or if we needs to allocate it gradually. */
+         * Create new argv if space is insufficient or if we need to allocate it gradually. */
         if (unlikely(c->multibulklen > c->argv_len || c->multibulklen > 1024)) {
             zfree(c->argv);
             c->argv_len = min(c->multibulklen, 1024);
