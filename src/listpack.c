@@ -373,15 +373,14 @@ static inline unsigned long lpEncodeBacklen(unsigned char *buf, uint64_t l) {
  * 5 bytes are used), UINT64_MAX is returned to report the problem. */
 static inline uint64_t lpDecodeBacklen(unsigned char *p) {
     uint64_t val = 0;
-    uint64_t shift = 0;
-    do {
-        val |= (uint64_t)(p[0] & 127) << shift;
-        if (!(p[0] & 128)) break;
-        shift += 7;
-        p--;
-        if (shift > 28) return UINT64_MAX;
-    } while(1);
-    return val;
+    for (uint64_t shift = 0; shift <= 28; shift += 7) {
+        val |= (uint64_t)(*p & 127) << shift;
+        if (!(*p & 128)) {
+            return val;
+        }
+        p--;  // Move to the previous byte
+    }
+    return UINT64_MAX;  // Invalid encoding if we exceed 5 bytes
 }
 
 /* Encode the string element pointed by 's' of size 'len' in the target
