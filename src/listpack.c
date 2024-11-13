@@ -115,7 +115,7 @@
     assert((p) >= (lp)+LP_HDR_SIZE && (p)+(len) < (lp)+lpGetTotalBytes((lp))); \
 } while (0)
 
-static inline void lpAssertValidEntry(unsigned char* lp, size_t lpbytes, unsigned char *p);
+static inline void lpAssertValidEntry(const unsigned char* lp, const size_t lpbytes, unsigned char *p);
 
 /* Don't let listpacks grow over 1GB in any case, don't wanna risk overflow in
  * Total Bytes header field */
@@ -459,6 +459,17 @@ unsigned char *lpSkip(unsigned char *p) {
 /* If 'p' points to an element of the listpack, calling lpNext() will return
  * the pointer to the next element (the one on the right), or NULL if 'p'
  * already pointed to the last element of the listpack. */
+unsigned char *lpNextWithBytes(const unsigned char *lp, const size_t lpbytes, unsigned char *p) {
+    assert(p);
+    p = lpSkip(p);
+    if (p[0] == LP_EOF) return NULL;
+    lpAssertValidEntry(lp, lpbytes, p);
+    return p;
+}
+
+/* If 'p' points to an element of the listpack, calling lpNext() will return
+ * the pointer to the next element (the one on the right), or NULL if 'p'
+ * already pointed to the last element of the listpack. */
 unsigned char *lpNext(unsigned char *lp, unsigned char *p) {
     assert(p);
     p = lpSkip(p);
@@ -647,8 +658,95 @@ static inline unsigned char *lpGetWithSize(unsigned char *p, int64_t *count, uns
     }
 }
 
+static inline unsigned char *lpGetWithBuf(unsigned char *p, int64_t *count, unsigned char *intbuf) {
+    int64_t val;
+    uint64_t uval, negstart, negmax;
+    const unsigned char encoding = p[0];
+
+    assert(p); /* assertion for valgrind (avoid NPD) */
+    /* string encoding */
+    if (LP_ENCODING_IS_6BIT_STR(encoding)) {
+        *count = LP_ENCODING_6BIT_STR_LEN(p);
+        return p+1;
+    }
+    if (LP_ENCODING_IS_12BIT_STR(encoding)) {
+        *count = LP_ENCODING_12BIT_STR_LEN(p);
+        return p+2;
+    }
+    if (LP_ENCODING_IS_32BIT_STR(encoding)) {
+        *count = LP_ENCODING_32BIT_STR_LEN(p);
+        return p+5;
+    }
+    /* int encoding */
+    if (LP_ENCODING_IS_7BIT_UINT(encoding)) {
+        negstart = UINT64_MAX; /* 7 bit ints are always positive. */
+        negmax = 0;
+        uval = encoding & 0x7f;
+    } else if (LP_ENCODING_IS_13BIT_INT(encoding)) {
+        uval = ((encoding&0x1f)<<8) | p[1];
+        negstart = (uint64_t)1<<12;
+        negmax = 8191;
+    } else if (LP_ENCODING_IS_16BIT_INT(encoding)) {
+        uval = (uint64_t)p[1] |
+               (uint64_t)p[2]<<8;
+        negstart = (uint64_t)1<<15;
+        negmax = UINT16_MAX;
+    } else if (LP_ENCODING_IS_24BIT_INT(encoding)) {
+        uval = (uint64_t)p[1] |
+               (uint64_t)p[2]<<8 |
+               (uint64_t)p[3]<<16;
+        negstart = (uint64_t)1<<23;
+        negmax = UINT32_MAX>>8;
+    } else if (LP_ENCODING_IS_32BIT_INT(encoding)) {
+        uval = (uint64_t)p[1] |
+               (uint64_t)p[2]<<8 |
+               (uint64_t)p[3]<<16 |
+               (uint64_t)p[4]<<24;
+        negstart = (uint64_t)1<<31;
+        negmax = UINT32_MAX;
+    } else if (LP_ENCODING_IS_64BIT_INT(encoding)) {
+        uval = (uint64_t)p[1] |
+               (uint64_t)p[2]<<8 |
+               (uint64_t)p[3]<<16 |
+               (uint64_t)p[4]<<24 |
+               (uint64_t)p[5]<<32 |
+               (uint64_t)p[6]<<40 |
+               (uint64_t)p[7]<<48 |
+               (uint64_t)p[8]<<56;
+        negstart = (uint64_t)1<<63;
+        negmax = UINT64_MAX;
+    } else {
+        uval = 12345678900000000ULL + encoding;
+        negstart = UINT64_MAX;
+        negmax = 0;
+    }
+
+    /* We reach this code path only for integer encodings.
+     * Convert the unsigned value to the signed one using two's complement
+     * rule. */
+    if (uval >= negstart) {
+        /* This three steps conversion should avoid undefined behaviors
+         * in the unsigned -> signed conversion. */
+        uval = negmax-uval;
+        val = uval;
+        val = -val-1;
+    } else {
+        val = uval;
+    }
+
+    /* Return the string representation of the integer or the value itself
+     * depending on intbuf being NULL or not. */
+    if (intbuf) {
+        *count = ll2string((char*)intbuf,LP_INTBUF_SIZE,(long long)val);
+        return intbuf;
+    } else {
+        *count = val;
+        return NULL;
+    }
+}
+
 unsigned char *lpGet(unsigned char *p, int64_t *count, unsigned char *intbuf) {
-    return lpGetWithSize(p, count, intbuf, NULL);
+    return lpGetWithBuf(p, count, intbuf);
 }
 
 /* This is just a wrapper to lpGet() that is able to get entry value directly.
@@ -1487,8 +1585,9 @@ unsigned char *lpValidateFirst(unsigned char *lp) {
 
 /* Validate the integrity of a single listpack entry and move to the next one.
  * The input argument 'pp' is a reference to the current record and is advanced on exit.
+ *  the data pointed to by 'lp' will not be modified by the function.
  * Returns 1 if valid, 0 if invalid. */
-int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
+int lpValidateNext(const unsigned char *lp, unsigned char **pp, const size_t lpbytes) {
 #define OUT_OF_RANGE(p) ( \
         (p) < lp + LP_HDR_SIZE || \
         (p) > lp + lpbytes - 1)
@@ -1537,7 +1636,7 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
 }
 
 /* Validate that the entry doesn't reach outside the listpack allocation. */
-static inline void lpAssertValidEntry(unsigned char* lp, size_t lpbytes, unsigned char *p) {
+static inline void lpAssertValidEntry(const unsigned char* lp, const size_t lpbytes, unsigned char *p) {
     assert(lpValidateNext(lp, &p, lpbytes));
 }
 
