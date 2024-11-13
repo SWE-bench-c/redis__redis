@@ -431,17 +431,17 @@ static inline uint32_t lpCurrentEncodedSizeUnsafe(unsigned char *p) {
  * This includes just the encoding byte, and the bytes needed to encode the length
  * of the element (excluding the element data itself)
  * If the element encoding is wrong then 0 is returned. */
-static inline uint32_t lpCurrentEncodedSizeBytes(unsigned char *p) {
-    if (LP_ENCODING_IS_7BIT_UINT(p[0])) return 1;
-    if (LP_ENCODING_IS_6BIT_STR(p[0])) return 1;
-    if (LP_ENCODING_IS_13BIT_INT(p[0])) return 1;
-    if (LP_ENCODING_IS_16BIT_INT(p[0])) return 1;
-    if (LP_ENCODING_IS_24BIT_INT(p[0])) return 1;
-    if (LP_ENCODING_IS_32BIT_INT(p[0])) return 1;
-    if (LP_ENCODING_IS_64BIT_INT(p[0])) return 1;
-    if (LP_ENCODING_IS_12BIT_STR(p[0])) return 2;
-    if (LP_ENCODING_IS_32BIT_STR(p[0])) return 5;
-    if (p[0] == LP_EOF) return 1;
+static inline uint32_t lpCurrentEncodedSizeBytes(const unsigned char encoding) {
+    if (LP_ENCODING_IS_7BIT_UINT(encoding)) return 1;
+    if (LP_ENCODING_IS_6BIT_STR(encoding)) return 1;
+    if (LP_ENCODING_IS_13BIT_INT(encoding)) return 1;
+    if (LP_ENCODING_IS_16BIT_INT(encoding)) return 1;
+    if (LP_ENCODING_IS_24BIT_INT(encoding)) return 1;
+    if (LP_ENCODING_IS_32BIT_INT(encoding)) return 1;
+    if (LP_ENCODING_IS_64BIT_INT(encoding)) return 1;
+    if (LP_ENCODING_IS_12BIT_STR(encoding)) return 2;
+    if (LP_ENCODING_IS_32BIT_STR(encoding)) return 5;
+    if (encoding == LP_EOF) return 1;
     return 0;
 }
 
@@ -1506,7 +1506,7 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
     }
 
     /* check that we can read the encoded size */
-    uint32_t lenbytes = lpCurrentEncodedSizeBytes(p);
+    uint32_t lenbytes = lpCurrentEncodedSizeBytes(p[0]);
     if (!lenbytes)
         return 0;
 
@@ -1859,7 +1859,7 @@ void lpRepr(unsigned char *lp) {
         
     p = lpFirst(lp);
     while(p) {
-        uint32_t encoded_size_bytes = lpCurrentEncodedSizeBytes(p);
+        uint32_t encoded_size_bytes = lpCurrentEncodedSizeBytes(p[0]);
         uint32_t encoded_size = lpCurrentEncodedSizeUnsafe(p);
         unsigned long back_len = lpEncodeBacklen(NULL, encoded_size);
         printf(
