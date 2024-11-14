@@ -326,8 +326,6 @@ REDIS_NO_SANITIZE("bounds")
 static inline void _addReplyToBuffer(client *c, const char *s, size_t reply_len) {
     memcpy(c->buf+c->bufpos,s,reply_len);
     c->bufpos+=reply_len;
-    /* We update the buffer peak after appending the reply to the buffer */
-    c->buf_peak = max(c->buf_peak,(size_t)c->bufpos);
 }
 
 /* Adds the reply to the reply linked list.
@@ -411,7 +409,10 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
 
     /* If there already are entries in the reply list or the added length surpasses the buffer,
      * we cannot add anything more to the static buffer. */
-    const int out_buffer_boundary = len > (c->buf_usable_size - c->bufpos);
+    const size_t available = c->buf_usable_size - c->bufpos;
+    /* We update the buffer peak always */
+    c->buf_peak = max(c->buf_peak,(size_t)available);
+    const int out_buffer_boundary = len > available;
     if (listLength(c->reply) > 0 || out_buffer_boundary)
         _addReplyProtoToList(c,c->reply,s,len);
     else
