@@ -12373,7 +12373,8 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
     }
 
     if (post_load_err) {
-        moduleUnload(ctx.module->name, NULL);
+        const char *errmsg = NULL;
+        moduleUnload(ctx.module->name, &errmsg);
         moduleFreeContext(&ctx);
         return C_ERR;
     }
