@@ -115,7 +115,7 @@
     assert((p) >= (lp)+LP_HDR_SIZE && (p)+(len) < (lp)+lpGetTotalBytes((lp))); \
 } while (0)
 
-static inline void lpAssertValidEntry(const unsigned char* lp, const size_t lpbytes, unsigned char *p);
+static inline void lpAssertValidEntry(unsigned char* lp, size_t lpbytes, unsigned char *p);
 
 /* Don't let listpacks grow over 1GB in any case, don't wanna risk overflow in
  * Total Bytes header field */
@@ -459,7 +459,7 @@ unsigned char *lpSkip(unsigned char *p) {
 /* If 'p' points to an element of the listpack, calling lpNext() will return
  * the pointer to the next element (the one on the right), or NULL if 'p'
  * already pointed to the last element of the listpack. */
-unsigned char *lpNextWithBytes(const unsigned char *lp, const size_t lpbytes, unsigned char *p) {
+unsigned char *lpNextWithBytes(unsigned char *lp, const size_t lpbytes, unsigned char *p) {
     assert(p);
     p = lpSkip(p);
     if (p[0] == LP_EOF) return NULL;
@@ -1587,7 +1587,7 @@ unsigned char *lpValidateFirst(unsigned char *lp) {
  * The input argument 'pp' is a reference to the current record and is advanced on exit.
  *  the data pointed to by 'lp' will not be modified by the function.
  * Returns 1 if valid, 0 if invalid. */
-int lpValidateNext(const unsigned char *lp, unsigned char **pp, const size_t lpbytes) {
+int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
 #define OUT_OF_RANGE(p) ( \
         (p) < lp + LP_HDR_SIZE || \
         (p) > lp + lpbytes - 1)
@@ -1636,7 +1636,7 @@ int lpValidateNext(const unsigned char *lp, unsigned char **pp, const size_t lpb
 }
 
 /* Validate that the entry doesn't reach outside the listpack allocation. */
-static inline void lpAssertValidEntry(const unsigned char* lp, const size_t lpbytes, unsigned char *p) {
+static inline void lpAssertValidEntry(unsigned char* lp, size_t lpbytes, unsigned char *p) {
     assert(lpValidateNext(lp, &p, lpbytes));
 }
 
