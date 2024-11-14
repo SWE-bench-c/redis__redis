@@ -456,9 +456,7 @@ unsigned char *lpSkip(unsigned char *p) {
     return p;
 }
 
-/* If 'p' points to an element of the listpack, calling lpNext() will return
- * the pointer to the next element (the one on the right), or NULL if 'p'
- * already pointed to the last element of the listpack. */
+/* This is similar to lpNext() but avoids the inner call to lpBytes when you already know the listpack size. */
 unsigned char *lpNextWithBytes(unsigned char *lp, const size_t lpbytes, unsigned char *p) {
     assert(p);
     p = lpSkip(p);
@@ -658,6 +656,11 @@ static inline unsigned char *lpGetWithSize(unsigned char *p, int64_t *count, uns
     }
 }
 
+/* Return the listpack element pointed by 'p'.
+ *
+ * The function has the same behaviour as lpGetWithSize when 'entry_size' is NULL,
+ * but avoids a lot of unecesarry branching performance penalties.
+ * */
 static inline unsigned char *lpGetWithBuf(unsigned char *p, int64_t *count, unsigned char *intbuf) {
     int64_t val;
     uint64_t uval, negstart, negmax;
