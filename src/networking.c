@@ -323,9 +323,7 @@ int prepareClientToWrite(client *c) {
  * zmalloc_usable_size() call. Writing beyond client->buf boundaries confuses
  * sanitizer and generates a false positive out-of-bounds error */
 REDIS_NO_SANITIZE("bounds")
-static inline void _addReplyToBuffer(client *c, const char *s, size_t len) {
-    const size_t available = c->buf_usable_size - c->bufpos;
-    const size_t reply_len = len > available ? available : len;
+static inline void _addReplyToBuffer(client *c, const char *s, size_t reply_len) {
     memcpy(c->buf+c->bufpos,s,reply_len);
     c->bufpos+=reply_len;
     /* We update the buffer peak after appending the reply to the buffer */
@@ -411,9 +409,10 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
         return;
     }
 
-    /* If there already are entries in the reply list, we cannot
-     * add anything more to the static buffer. */
-    if (listLength(c->reply) > 0)
+    /* If there already are entries in the reply list or the added length surpasses the buffer,
+     * we cannot add anything more to the static buffer. */
+    const int out_buffer_boundary = len > (c->buf_usable_size - c->bufpos);
+    if (listLength(c->reply) > 0 || out_buffer_boundary)
         _addReplyProtoToList(c,c->reply,s,len);
     else
         _addReplyToBuffer(c,s,len);
