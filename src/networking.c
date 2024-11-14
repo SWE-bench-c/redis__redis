@@ -317,27 +317,19 @@ int prepareClientToWrite(client *c) {
  * Low level functions to add more data to output buffers.
  * -------------------------------------------------------------------------- */
 
-/* Attempts to add the reply to the static buffer in the client struct.
- * Returns the length of data that is added to the reply buffer.
+/* Adds reply to the static buffer in the client struct.
  *
  * Sanitizer suppression: client->buf_usable_size determined by
  * zmalloc_usable_size() call. Writing beyond client->buf boundaries confuses
  * sanitizer and generates a false positive out-of-bounds error */
 REDIS_NO_SANITIZE("bounds")
-size_t _addReplyToBuffer(client *c, const char *s, size_t len) {
-    size_t available = c->buf_usable_size - c->bufpos;
-
-    /* If there already are entries in the reply list, we cannot
-     * add anything more to the static buffer. */
-    if (listLength(c->reply) > 0) return 0;
-
-    size_t reply_len = len > available ? available : len;
+static inline void _addReplyToBuffer(client *c, const char *s, size_t len) {
+    const size_t available = c->buf_usable_size - c->bufpos;
+    const size_t reply_len = len > available ? available : len;
     memcpy(c->buf+c->bufpos,s,reply_len);
     c->bufpos+=reply_len;
     /* We update the buffer peak after appending the reply to the buffer */
-    if(c->buf_peak < (size_t)c->bufpos)
-        c->buf_peak = (size_t)c->bufpos;
-    return reply_len;
+    c->buf_peak = max(c->buf_peak,(size_t)c->bufpos);
 }
 
 /* Adds the reply to the reply linked list.
@@ -419,8 +411,12 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
         return;
     }
 
-    size_t reply_len = _addReplyToBuffer(c,s,len);
-    if (len > reply_len) _addReplyProtoToList(c,c->reply,s+reply_len,len-reply_len);
+    /* If there already are entries in the reply list, we cannot
+     * add anything more to the static buffer. */
+    if (listLength(c->reply) > 0)
+        _addReplyProtoToList(c,c->reply,s,len);
+    else
+        _addReplyToBuffer(c,s,len);
 }
 
 /* -----------------------------------------------------------------------------
