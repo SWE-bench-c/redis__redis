@@ -369,6 +369,23 @@ static inline unsigned long lpEncodeBacklen(unsigned char *buf, uint64_t l) {
     }
 }
 
+/* Calculate the number of bytes required to reverse-encode a variable length
+ * field representing the length of the previous element of size 'l', ranging
+ * from 1 to 5. */
+static inline unsigned long lpEncodeBacklenBytes(uint64_t l) {
+    if (l <= 127) {
+        return 1;
+    } else if (l < 16383) {
+        return 2;
+    } else if (l < 2097151) {
+        return 3;
+    } else if (l < 268435455) {
+        return 4;
+    } else {
+        return 5;
+    }
+}
+
 /* Decode the backlen and returns it. If the encoding looks invalid (more than
  * 5 bytes are used), UINT64_MAX is returned to report the problem. */
 static inline uint64_t lpDecodeBacklen(unsigned char *p) {
@@ -449,9 +466,9 @@ static inline uint32_t lpCurrentEncodedSizeBytes(const unsigned char encoding) {
  * function if the current element is the EOF element at the end of the
  * listpack, however, while this function is used to implement lpNext(),
  * it does not return NULL when the EOF element is encountered. */
-unsigned char *lpSkip(unsigned char *p) {
+static inline unsigned char *lpSkip(unsigned char *p) {
     unsigned long entrylen = lpCurrentEncodedSizeUnsafe(p);
-    entrylen += lpEncodeBacklen(NULL,entrylen);
+    entrylen += lpEncodeBacklenBytes(entrylen);
     p += entrylen;
     return p;
 }
@@ -484,7 +501,7 @@ unsigned char *lpPrev(unsigned char *lp, unsigned char *p) {
     if (p-lp == LP_HDR_SIZE) return NULL;
     p--; /* Seek the first backlen byte of the last element. */
     uint64_t prevlen = lpDecodeBacklen(p);
-    prevlen += lpEncodeBacklen(NULL,prevlen);
+    prevlen += lpEncodeBacklenBytes(prevlen);
     p -= prevlen-1; /* Seek the first byte of the previous entry. */
     lpAssertValidEntry(lp, lpBytes(lp), p);
     return p;
@@ -578,7 +595,7 @@ static inline unsigned char *lpGetWithSize(unsigned char *p, int64_t *count, uns
         if (entry_size) *entry_size = LP_ENCODING_7BIT_UINT_ENTRY_SIZE;
     } else if (LP_ENCODING_IS_6BIT_STR(p[0])) {
         *count = LP_ENCODING_6BIT_STR_LEN(p);
-        if (entry_size) *entry_size = 1 + *count + lpEncodeBacklen(NULL, *count + 1);
+        if (entry_size) *entry_size = 1 + *count + lpEncodeBacklenBytes(*count + 1);
         return p+1;
     } else if (LP_ENCODING_IS_13BIT_INT(p[0])) {
         uval = ((p[0]&0x1f)<<8) | p[1];
@@ -620,11 +637,11 @@ static inline unsigned char *lpGetWithSize(unsigned char *p, int64_t *count, uns
         if (entry_size) *entry_size = LP_ENCODING_64BIT_INT_ENTRY_SIZE;
     } else if (LP_ENCODING_IS_12BIT_STR(p[0])) {
         *count = LP_ENCODING_12BIT_STR_LEN(p);
-        if (entry_size) *entry_size = 2 + *count + lpEncodeBacklen(NULL, *count + 2);
+        if (entry_size) *entry_size = 2 + *count + lpEncodeBacklenBytes(*count + 2);
         return p+2;
     } else if (LP_ENCODING_IS_32BIT_STR(p[0])) {
         *count = LP_ENCODING_32BIT_STR_LEN(p);
-        if (entry_size) *entry_size = 5 + *count + lpEncodeBacklen(NULL, *count + 5);
+        if (entry_size) *entry_size = 5 + *count + lpEncodeBacklenBytes(*count + 5);
         return p+5;
     } else {
         uval = 12345678900000000ULL + p[0];
@@ -981,7 +998,7 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *elestr, unsigned char 
     uint32_t replaced_len  = 0;
     if (where == LP_REPLACE) {
         replaced_len = lpCurrentEncodedSizeUnsafe(p);
-        replaced_len += lpEncodeBacklen(NULL,replaced_len);
+        replaced_len += lpEncodeBacklenBytes(replaced_len);
         ASSERT_INTEGRITY_LEN(lp, p, replaced_len);
     }
 
@@ -1521,7 +1538,7 @@ size_t lpBytes(unsigned char *lp) {
 size_t lpEntrySizeInteger(long long lval) {
     uint64_t enclen;
     lpEncodeIntegerGetType(lval, NULL, &enclen);
-    unsigned long backlen = lpEncodeBacklen(NULL, enclen);
+    unsigned long backlen = lpEncodeBacklenBytes(enclen);
     return enclen + backlen;
 }
 
@@ -1618,7 +1635,7 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
 
     /* get the entry length and encoded backlen. */
     unsigned long entrylen = lpCurrentEncodedSizeUnsafe(p);
-    unsigned long encodedBacklen = lpEncodeBacklen(NULL,entrylen);
+    unsigned long encodedBacklen = lpEncodeBacklenBytes(entrylen);
     entrylen += encodedBacklen;
 
     /* make sure the entry doesn't reach outside the edge of the listpack */
@@ -1963,7 +1980,7 @@ void lpRepr(unsigned char *lp) {
     while(p) {
         uint32_t encoded_size_bytes = lpCurrentEncodedSizeBytes(p[0]);
         uint32_t encoded_size = lpCurrentEncodedSizeUnsafe(p);
-        unsigned long back_len = lpEncodeBacklen(NULL, encoded_size);
+        unsigned long back_len = lpEncodeBacklenBytes(encoded_size);
         printf(
             "{\n"
                 "\taddr: 0x%08lx,\n"
