@@ -12373,7 +12373,7 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
     }
 
     if (post_load_err) {
-        moduleUnload(ctx.module->name, NULL, true);
+        moduleUnload(ctx.module->name, NULL, 1);
         moduleFreeContext(&ctx);
         return C_ERR;
     }
@@ -12390,7 +12390,7 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
 /* Unload the module registered with the specified name. On success
  * C_OK is returned, otherwise C_ERR is returned and errmsg is set
  * with an appropriate message. */
-int moduleUnload(sds name, const char **errmsg, bool forced_unload) {
+int moduleUnload(sds name, const char **errmsg, int forced_unload) {
     struct RedisModule *module = dictFetchValue(modules,name);
 
     if (!forced_unload) {
@@ -13186,7 +13186,7 @@ NULL
 
     } else if (!strcasecmp(subcmd,"unload") && c->argc == 3) {
         const char *errmsg = NULL;
-        if (moduleUnload(c->argv[2]->ptr, &errmsg, false) == C_OK)
+        if (moduleUnload(c->argv[2]->ptr, &errmsg, 0) == C_OK)
             addReply(c,shared.ok);
         else {
             if (errmsg == NULL) errmsg = "operation not possible.";
