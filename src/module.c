@@ -12373,8 +12373,7 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
     }
 
     if (post_load_err) {
-        const char *errmsg = NULL;
-        moduleUnload(ctx.module->name, &errmsg);
+        moduleUnload(ctx.module->name, NULL, true);
         moduleFreeContext(&ctx);
         return C_ERR;
     }
@@ -12391,28 +12390,30 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
 /* Unload the module registered with the specified name. On success
  * C_OK is returned, otherwise C_ERR is returned and errmsg is set
  * with an appropriate message. */
-int moduleUnload(sds name, const char **errmsg) {
+int moduleUnload(sds name, const char **errmsg, bool forced_unload) {
     struct RedisModule *module = dictFetchValue(modules,name);
 
-    if (module == NULL) {
-        *errmsg = "no such module with that name";
-        return C_ERR;
-    } else if (listLength(module->types)) {
-        *errmsg = "the module exports one or more module-side data "
-                  "types, can't unload";
-        return C_ERR;
-    } else if (listLength(module->usedby)) {
-        *errmsg = "the module exports APIs used by other modules. "
-                  "Please unload them first and try again";
-        return C_ERR;
-    } else if (module->blocked_clients) {
-        *errmsg = "the module has blocked clients. "
-                  "Please wait for them to be unblocked and try again";
-        return C_ERR;
-    } else if (moduleHoldsTimer(module)) {
-        *errmsg = "the module holds timer that is not fired. "
-                  "Please stop the timer or wait until it fires.";
-        return C_ERR;
+    if (!forced_unload) {
+        if (module == NULL) {
+            *errmsg = "no such module with that name";
+            return C_ERR;
+        } else if (listLength(module->types)) {
+            *errmsg = "the module exports one or more module-side data "
+                    "types, can't unload";
+            return C_ERR;
+        } else if (listLength(module->usedby)) {
+            *errmsg = "the module exports APIs used by other modules. "
+                    "Please unload them first and try again";
+            return C_ERR;
+        } else if (module->blocked_clients) {
+            *errmsg = "the module has blocked clients. "
+                    "Please wait for them to be unblocked and try again";
+            return C_ERR;
+        } else if (moduleHoldsTimer(module)) {
+            *errmsg = "the module holds timer that is not fired. "
+                    "Please stop the timer or wait until it fires.";
+            return C_ERR;
+        }
     }
 
     /* Give module a chance to clean up. */
@@ -13185,7 +13186,7 @@ NULL
 
     } else if (!strcasecmp(subcmd,"unload") && c->argc == 3) {
         const char *errmsg = NULL;
-        if (moduleUnload(c->argv[2]->ptr, &errmsg) == C_OK)
+        if (moduleUnload(c->argv[2]->ptr, &errmsg, false) == C_OK)
             addReply(c,shared.ok);
         else {
             if (errmsg == NULL) errmsg = "operation not possible.";
