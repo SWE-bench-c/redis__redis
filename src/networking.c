@@ -317,17 +317,6 @@ int prepareClientToWrite(client *c) {
  * Low level functions to add more data to output buffers.
  * -------------------------------------------------------------------------- */
 
-/* Adds reply to the static buffer in the client struct.
- *
- * Sanitizer suppression: client->buf_usable_size determined by
- * zmalloc_usable_size() call. Writing beyond client->buf boundaries confuses
- * sanitizer and generates a false positive out-of-bounds error */
-REDIS_NO_SANITIZE("bounds")
-static inline void _addReplyToBuffer(client *c, const char *s, size_t reply_len) {
-    memcpy(c->buf+c->bufpos,s,reply_len);
-    c->bufpos+=reply_len;
-}
-
 /* Adds the reply to the reply linked list.
  * Note: some edits to this function need to be relayed to AddReplyFromClient. */
 void _addReplyProtoToList(client *c, list *reply_list, const char *s, size_t len) {
@@ -407,16 +396,20 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
         return;
     }
 
+    /* We update the buffer peak always */
+    const size_t available = c->buf_usable_size - c->bufpos;
+    c->buf_peak = max(c->buf_peak,(size_t)available);
+
     /* If there already are entries in the reply list or the added length surpasses the buffer,
      * we cannot add anything more to the static buffer. */
-    const size_t available = c->buf_usable_size - c->bufpos;
-    /* We update the buffer peak always */
-    c->buf_peak = max(c->buf_peak,(size_t)available);
     const int out_buffer_boundary = len > available;
     if (listLength(c->reply) > 0 || out_buffer_boundary)
         _addReplyProtoToList(c,c->reply,s,len);
-    else
-        _addReplyToBuffer(c,s,len);
+    else {
+        /* Add reply to the static buffer in the client struct. */
+        memcpy(c->buf+c->bufpos,s,len);
+        c->bufpos+=len;
+    }
 }
 
 /* -----------------------------------------------------------------------------

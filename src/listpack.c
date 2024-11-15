@@ -457,7 +457,7 @@ unsigned char *lpSkip(unsigned char *p) {
 }
 
 /* This is similar to lpNext() but avoids the inner call to lpBytes when you already know the listpack size. */
-unsigned char *lpNextWithBytes(unsigned char *lp, const size_t lpbytes, unsigned char *p) {
+unsigned char *lpNextWithBytes(unsigned char *lp, unsigned char *p, const size_t lpbytes) {
     assert(p);
     p = lpSkip(p);
     if (p[0] == LP_EOF) return NULL;

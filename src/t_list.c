@@ -696,7 +696,7 @@ void addListListpackRangeReply(client *c, robj *o, int from, int rangelen, int r
         unsigned char buf[LP_INTBUF_SIZE];
         unsigned char *vstr = lpGet(p,&vlen,buf);
         addReplyBulkCBuffer(c,vstr,vlen);
-        p = reverse ? lpPrev(lp,p) : lpNextWithBytes(lp,lpbytes,p);
+        p = reverse ? lpPrev(lp,p) : lpNextWithBytes(lp,p,lpbytes);
     }
 }
 
