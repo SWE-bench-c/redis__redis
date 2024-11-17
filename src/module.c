@@ -12371,7 +12371,7 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
     }
 
     if (post_load_err) {
-        moduleUnload(ctx.module->name, NULL, 1);
+        serverAssert(moduleUnload(ctx.module->name, NULL, 1) == C_OK);
         moduleFreeContext(&ctx);
         return C_ERR;
     }
