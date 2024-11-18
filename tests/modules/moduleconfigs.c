@@ -246,5 +246,9 @@ int RedisModule_OnUnload(RedisModuleCtx *ctx) {
         RedisModule_FreeString(ctx, strval);
         strval = NULL;
     }
+    if (strval2) {
+        RedisModule_FreeString(ctx, strval2);
+        strval2 = NULL;
+    }
     return REDISMODULE_OK;
 }
