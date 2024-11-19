@@ -12636,27 +12636,25 @@ int moduleVerifyResourceName(const char *name) {
  * "<name>|<alias>". Unlike moduleVerifyResourceName(), unprefixed name config 
  * allows a single dot in the name or alias. 
  * 
- * delimiter_ptr - Updates the pointer delimiter_ptr to point to "|" if it 
- * exists, or NULL otherwise. 
+ * delim - Updates to point to "|" if it exists, NULL otherwise. 
  */
-int moduleVerifyUnprefixedName(const char *nameAlias, const char **delimiter_ptr) {
+int moduleVerifyUnprefixedName(const char *nameAlias, const char **delim) {
     if (nameAlias[0] == '\0')
         return REDISMODULE_ERR;
 
-    *delimiter_ptr = NULL;
+    *delim = NULL;
     int dot_count = 0, lname = 0;
 
     for (size_t i = 0; nameAlias[i] != '\0'; i++) {
         char ch = nameAlias[i];
         
-        if (ch == '|') {
-            /* Handle separator between name and alias */
+        if (((*delim) == NULL) && (ch == '|')) {
+            /* Handle single separator between name and alias */
             if (!lname) {
-                serverLog(LL_WARNING, "Module configuration name or alias part is "
-                                      "missing alphanumeric characters: %s", nameAlias);
+                serverLog(LL_WARNING, "Module configuration name is empty: %s", nameAlias);
                 return REDISMODULE_ERR;
             }
-            *delimiter_ptr = &nameAlias[i];
+            *delim = &nameAlias[i];
             dot_count = lname = 0;
         } else if ( (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
                     (ch >= '0' && ch <= '9') || (ch == '_') || (ch == '-') )
@@ -12675,7 +12673,7 @@ int moduleVerifyUnprefixedName(const char *nameAlias, const char **delimiter_ptr
     }
     
     if (!lname) {
-        serverLog(LL_WARNING, "Invalid alias name to module configuration name : %s", nameAlias);
+        serverLog(LL_WARNING, "Module configuration name or alias is empty : %s", nameAlias);
         return REDISMODULE_ERR;
     }
 
@@ -12858,8 +12856,7 @@ ModuleConfig *createModuleConfig(const char *name, RedisModuleConfigApplyFunc ap
      *   - Prefixed:   "initial_size" becomes "<MODULE-NAME>.initial_size".
      */    
     if (flags & REDISMODULE_CONFIG_UNPREFIXED) {
-        const char *delim; /* Locate the '|' delimiter if present */
-        moduleVerifyUnprefixedName(name, &delim);
+        const char *delim = strchr(name, '|');
         cname = sdsnew(name);
         if (delim) { /* Handle "<NAME>|<ALIAS>" format */
             sdssubstr(cname, 0, delim - name);
@@ -12906,31 +12903,32 @@ int moduleConfigValidityCheck(RedisModule *module, const char *name, unsigned in
         }
         
         if (delim) { 
-            /* Temporary split the name and alias string for the check */
-            sds _name = sdsnew(name);            
-            sdssubstr(_name, 0, delim - name);
-            const char *alias = delim + 1;
-            isdup = isModuleConfigNameRegistered(module, _name) ||
-                    isModuleConfigNameRegistered(module, alias);
-            sdsfree(_name);
+            /* Temporary split the "<NAME>|<ALIAS>" for the check */
+            int count;
+            sds *ar = sdssplitlen(name, strlen(name), "|", 1, &count);
+            serverAssert(count == 2); /* Already validated */
+            isdup = configExists(ar[0]) || 
+                    configExists(ar[1]) || 
+                    (sdscmp(ar[0], ar[1]) == 0);
+            sdsfreesplitres(ar, count);
         } else {
-            isdup = isModuleConfigNameRegistered(module, name);
+            sds _name = sdsnew(name);
+            isdup = configExists(_name);
+            sdsfree(_name);
         }
     } else {
-
         if (moduleVerifyResourceName(name)) {
             errno = EINVAL;
             return REDISMODULE_ERR;
         }
 
         sds fullname = sdscatfmt(sdsempty(), "%s.%s", module->name, name);
-        isdup = isModuleConfigNameRegistered(module, fullname);
+        isdup = configExists(fullname);
         sdsfree(fullname);
     }
     
     if (isdup) {
-        serverLog(LL_WARNING,
-                  "Configuration by the name: %s already registered", name);
+        serverLog(LL_WARNING, "Configuration by the name: %s already registered", name);
         errno = EALREADY;
         return REDISMODULE_ERR;
     }

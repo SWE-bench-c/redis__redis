@@ -268,7 +268,7 @@ dict *configs = NULL; /* Runtime config values */
 
 /* Lookup a config by the provided sds string name, or return NULL
  * if the config does not exist */
-static standardConfig *lookupConfig(sds name) {
+static standardConfig *lookupConfig(const sds name) {
     dictEntry *de = dictFind(configs, name);
     return de ? dictGetVal(de) : NULL;
 }
@@ -3320,10 +3320,6 @@ void removeConfig(sds name) {
         sdsfree((sds) config->alias);
         
         switch (config->type) {
-            case STRING_CONFIG:
-                if (config->data.string.default_value)
-                    sdsfree((sds)config->data.string.default_value);
-                break;
             case SDS_CONFIG:
                 if (config->data.sds.default_value) 
                     sdsfree((sds)config->data.sds.default_value);
@@ -3337,8 +3333,11 @@ void removeConfig(sds name) {
                     }
                     zfree(config->data.enumd.enum_value);
                 }
-                break;                
+                break;
+            case STRING_CONFIG:
+                /* Not used by modules */
             default:
+                serverAssert(0);
                 break;
         }
     }
@@ -3379,7 +3378,7 @@ void addModuleStringConfig(sds name, sds alias, int flags, void *privdata, sds d
     if (alias) {
         sc.name = sdsdup(name);
         sc.alias = sdsdup(alias);
-        if (default_val) sc.data.string.default_value = sdsdup(default_val);
+        if (default_val) sc.data.sds.default_value = sdsdup(default_val);
         registerConfigValue(sc.alias, &sc, 1);
     }
 }
@@ -3472,4 +3471,8 @@ void configRewriteCommand(client *c) {
         serverLog(LL_NOTICE,"CONFIG REWRITE executed with success.");
         addReply(c,shared.ok);
     }
+}
+
+int configExists(const sds name) {
+    return lookupConfig(name) != NULL;
 }

@@ -3774,6 +3774,7 @@ void configGetCommand(client *c);
 void configResetStatCommand(client *c);
 void configRewriteCommand(client *c);
 void configHelpCommand(client *c);
+int configExists(const sds name);
 void hincrbyCommand(client *c);
 void hincrbyfloatCommand(client *c);
 void subscribeCommand(client *c);
