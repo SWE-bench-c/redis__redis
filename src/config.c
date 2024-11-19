@@ -3320,6 +3320,10 @@ void removeConfig(sds name) {
         sdsfree((sds) config->alias);
         
         switch (config->type) {
+            case BOOL_CONFIG:
+                break;
+            case NUMERIC_CONFIG:
+                break;
             case SDS_CONFIG:
                 if (config->data.sds.default_value) 
                     sdsfree((sds)config->data.sds.default_value);
@@ -3334,8 +3338,8 @@ void removeConfig(sds name) {
                     zfree(config->data.enumd.enum_value);
                 }
                 break;
-            case STRING_CONFIG:
-                /* Not used by modules */
+            case SPECIAL_CONFIG: /* Not used by modules */
+            case STRING_CONFIG: /* Not used by modules */
             default:
                 serverAssert(0);
                 break;
