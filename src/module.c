@@ -12145,7 +12145,7 @@ void moduleLoadFromQueue(void) {
         dictIterator *di = dictGetIterator(server.module_configs_queue);
         dictEntry *de;
         while ((de = dictNext(di)) != NULL) {
-            serverLog(LL_WARNING, " - %s %s", (char *)dictGetKey(de), (char *)dictGetVal(de));
+            serverLog(LL_WARNING, ">>> '%s %s'", (char *)dictGetKey(de), (char *)dictGetVal(de));
         }
         serverLog(LL_WARNING, "Module Configuration detected without loadmodule directive or no ApplyConfig call: aborting");
         exit(1);
