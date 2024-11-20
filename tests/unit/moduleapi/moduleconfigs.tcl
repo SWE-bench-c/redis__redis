@@ -182,9 +182,19 @@ start_server {tags {"modules"}} {
     }
 
     test {test double config argument to loadex} {
-        r module loadex $testmodule CONFIG moduleconfigs.mutable_bool yes CONFIG moduleconfigs.mutable_bool no
-        assert_equal [r config get moduleconfigs.mutable_bool] "moduleconfigs.mutable_bool no"
-        r module unload moduleconfigs
+        r module loadex $testmodule CONFIG moduleconfigs.mutable_bool yes \
+                                    CONFIG moduleconfigs.mutable_bool no \
+                                    CONFIG unprefix.numeric-alias 1 \
+                                    CONFIG unprefix.numeric-alias 2 \
+                                    CONFIG unprefix-string blabla
+                                    
+        assert_equal [r config get moduleconfigs.mutable_bool] "moduleconfigs.mutable_bool no"        
+        # Check un-prefixed and aliased configuration
+        assert_equal [r config get unprefix.numeric-alias] "unprefix.numeric-alias 2"
+        assert_equal [r config get unprefix.numeric] "unprefix.numeric 2"
+        assert_equal [r config get unprefix-string] "unprefix-string blabla"
+        assert_equal [r config get unprefix.string-alias] "unprefix.string-alias blabla"
+        r module unload moduleconfigs        
     }
 
     test {missing loadconfigs call} {
@@ -217,6 +227,9 @@ start_server {tags {"modules"}} {
         assert_match {*ERR*} $e
         assert_equal [r config get configs.test] "configs.test yes"
         r module unload configs
+        # Verify config name and its alias being used together gets failed
+        catch {[r module loadex $testmodule CONFIG unprefix.numeric 1 CONFIG unprefix.numeric-alias 1]}
+        assert_match {*ERR*} $e
     }
 
     test {test config rewrite with dynamic load} {
