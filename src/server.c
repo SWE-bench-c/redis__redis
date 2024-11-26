@@ -949,7 +949,7 @@ void removeClientFromMemUsageBucket(client *c, int allow_eviction) {
  * returns 1 if client eviction for this client is allowed, 0 otherwise.
  */
 int updateClientMemUsageAndBucket(client *c) {
-    serverAssert(io_threads_op == IO_THREADS_OP_IDLE && c->conn);
+    serverAssert(pthread_equal(pthread_self(), server.main_thread_id) && c->conn);
     int allow_eviction = clientEvictionAllowed(c);
     removeClientFromMemUsageBucket(c, allow_eviction);
 
@@ -1001,6 +1001,7 @@ void getExpansiveClientsInfo(size_t *in_usage, size_t *out_usage) {
  * default server.hz value is 10, so sometimes here we need to process thousands
  * of clients per second, turning this function into a source of latency.
  */
+#define CLIENTS_CRON_PAUSE_IOTHREAD 8
 #define CLIENTS_CRON_MIN_ITERATIONS 5
 void clientsCron(void) {
     /* Try to process at least numclients/server.hz of clients
@@ -1035,6 +1036,15 @@ void clientsCron(void) {
     ClientsPeakMemInput[zeroidx] = 0;
     ClientsPeakMemOutput[zeroidx] = 0;
 
+    /* Pause the IO threads that are processing clients, to let us access clients
+     * safely. In order to avoid increasing CPU usage by pausing all threads when
+     * there are too many io threads, we pause io threads in multiple batches. */
+    static int start = 1, end = 0;
+    if (server.io_threads_num >= 1 && listLength(server.clients) > 0) {
+        end = start + CLIENTS_CRON_PAUSE_IOTHREAD - 1;
+        if (end >= server.io_threads_num) end = server.io_threads_num - 1;
+        pauseIOThreadsRange(start, end);
+    }
 
     while(listLength(server.clients) && iterations--) {
         client *c;
@@ -1045,6 +1055,15 @@ void clientsCron(void) {
         head = listFirst(server.clients);
         c = listNodeValue(head);
         listRotateHeadToTail(server.clients);
+
+        if (c->running_tid != IOTHREAD_MAIN_THREAD_ID &&
+            !(c->running_tid >= start && c->running_tid <= end))
+        {
+            /* Skip clients that are being processed by the IO threads that
+             * are not paused. */
+            continue;
+        }
+
         /* The following functions do different service checks on the client.
          * The protocol is that they return non-zero if the client was
          * terminated. */
@@ -1064,6 +1083,14 @@ void clientsCron(void) {
             updateClientMemoryUsage(c);
 
         if (closeClientOnOutputBufferLimitReached(c, 0)) continue;
+    }
+
+    /* Resume the IO threads that were paused */
+    if (end) {
+        resumeIOThreadsRange(start, end);
+        start = end + 1;
+        if (start >= server.io_threads_num) start = 1;
+        end = 0;
     }
 }
 
@@ -1513,9 +1540,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         migrateCloseTimedoutSockets();
     }
 
-    /* Stop the I/O threads if we don't have enough pending work. */
-    stopThreadedIOIfNeeded();
-
     /* Resize tracking keys table if needed. This is also done at every
      * command execution, but we want to be sure that if the last command
      * executed changes the value via CONFIG SET, the server will perform
@@ -1667,18 +1691,22 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * events to handle. */
     if (ProcessingEventsWhileBlocked) {
         uint64_t processed = 0;
-        processed += handleClientsWithPendingReadsUsingThreads();
         processed += connTypeProcessPendingData();
         if (server.aof_state == AOF_ON || server.aof_state == AOF_WAIT_REWRITE)
             flushAppendOnlyFile(0);
         processed += handleClientsWithPendingWrites();
         processed += freeClientsInAsyncFreeQueue();
+
+        /* Let the clients after the blocking call be processed. */
+        processClientsOfAllIOThreads();
+        /* New connections may have been established while blocked, clients from
+         * IO thread may have replies to write, ensure they are promptly sent to
+         * IO threads. */
+        processed += sendPendingClientsToIOThreads();
+
         server.events_processed_while_blocked += processed;
         return;
     }
-
-    /* We should handle pending reads clients ASAP after event loop. */
-    handleClientsWithPendingReadsUsingThreads();
 
     /* Handle pending data(typical TLS). (must be done before flushAppendOnlyFile) */
     connTypeProcessPendingData();
@@ -1750,8 +1778,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     long long prev_fsynced_reploff = server.fsynced_reploff;
 
     /* Write the AOF buffer on disk,
-     * must be done before handleClientsWithPendingWritesUsingThreads,
-     * in case of appendfsync=always. */
+     * must be done before handleClientsWithPendingWrites and
+     * sendPendingClientsToIOThreads, in case of appendfsync=always. */
     if (server.aof_state == AOF_ON || server.aof_state == AOF_WAIT_REWRITE)
         flushAppendOnlyFile(0);
 
@@ -1773,7 +1801,10 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     }
 
     /* Handle writes with pending output buffers. */
-    handleClientsWithPendingWritesUsingThreads();
+    handleClientsWithPendingWrites();
+
+    /* Let io thread to handle its pending clients. */
+    sendPendingClientsToIOThreads();
 
     /* Record cron time in beforeSleep. This does not include the time consumed by AOF writing and IO writing above. */
     monotime cron_start_time_after_write = getMonotonicUs();
@@ -2102,6 +2133,7 @@ void initServerConfig(void) {
     memset(server.blocked_clients_by_type,0,
            sizeof(server.blocked_clients_by_type));
     server.shutdown_asap = 0;
+    server.crashing = 0;
     server.shutdown_flags = 0;
     server.shutdown_mstime = 0;
     server.cluster_module_flags = CLUSTER_MODULE_FLAG_NONE;
@@ -2568,9 +2600,9 @@ void resetServerStats(void) {
     server.stat_sync_full = 0;
     server.stat_sync_partial_ok = 0;
     server.stat_sync_partial_err = 0;
-    server.stat_io_reads_processed = 0;
+    atomicSet(server.stat_io_reads_processed, 0);
     atomicSet(server.stat_total_reads_processed, 0);
-    server.stat_io_writes_processed = 0;
+    atomicSet(server.stat_io_writes_processed, 0);
     atomicSet(server.stat_total_writes_processed, 0);
     atomicSet(server.stat_client_qbuf_limit_disconnections, 0);
     server.stat_client_outbuf_limit_disconnections = 0;
@@ -5871,6 +5903,7 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         long long current_active_defrag_time = server.stat_last_active_defrag_time ?
             (long long) elapsedUs(server.stat_last_active_defrag_time): 0;
         long long stat_client_qbuf_limit_disconnections;
+        long long stat_io_reads_processed, stat_io_writes_processed;
         atomicGet(server.stat_total_reads_processed, stat_total_reads_processed);
         atomicGet(server.stat_total_writes_processed, stat_total_writes_processed);
         atomicGet(server.stat_net_input_bytes, stat_net_input_bytes);
@@ -5878,6 +5911,8 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         atomicGet(server.stat_net_repl_input_bytes, stat_net_repl_input_bytes);
         atomicGet(server.stat_net_repl_output_bytes, stat_net_repl_output_bytes);
         atomicGet(server.stat_client_qbuf_limit_disconnections, stat_client_qbuf_limit_disconnections);
+        atomicGet(server.stat_io_reads_processed, stat_io_reads_processed);
+        atomicGet(server.stat_io_writes_processed, stat_io_writes_processed);
 
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info, "# Stats\r\n" FMTARGS(
@@ -5929,8 +5964,8 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
             "dump_payload_sanitizations:%lld\r\n", server.stat_dump_payload_sanitizations,
             "total_reads_processed:%lld\r\n", stat_total_reads_processed,
             "total_writes_processed:%lld\r\n", stat_total_writes_processed,
-            "io_threaded_reads_processed:%lld\r\n", server.stat_io_reads_processed,
-            "io_threaded_writes_processed:%lld\r\n", server.stat_io_writes_processed,
+            "io_threaded_reads_processed:%lld\r\n", stat_io_reads_processed,
+            "io_threaded_writes_processed:%lld\r\n", stat_io_writes_processed,
             "client_query_buffer_limit_disconnections:%lld\r\n", stat_client_qbuf_limit_disconnections,
             "client_output_buffer_limit_disconnections:%lld\r\n", server.stat_client_outbuf_limit_disconnections,
             "reply_buffer_shrinks:%lld\r\n", server.stat_reply_buffer_shrinks,
