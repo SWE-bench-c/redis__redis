@@ -9,7 +9,7 @@
 
 #include "server.h"
 
-#define IO_THREADS_MAX_NUM 128
+/* IO threads. */
 static ioThread io_threads[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
 
 /* IO thread structure for the main thread. */
@@ -42,16 +42,6 @@ void putInPendingClienstForMainThread(client *c) {
     }
 }
 
-/* When the main thread wants the specific thread to handle this client, uninstall
- * read and write handler, set thread id, disable read and write, and then put in
- * the list, main thread will send these clients to IO thread in beforeSleep. */
-void putInPendingClienstForIOThreads(client *c) {
-    connSetReadHandler(c->conn, NULL);
-    connSetWriteHandler(c->conn, NULL);
-    c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
-    listAddNodeTail(pending_clients_for_io_threads[c->tid], c);
-}
-
 /* Uninstall read and write handler of a client from io thread event loop,
  * to make sure that we can operate the client safely. */
 void uninstallHandlerFromIOThreadEventLoop(client *c) {
@@ -69,6 +59,8 @@ void uninstallHandlerFromIOThreadEventLoop(client *c) {
  * and then bind the client connection into server's event loop. */
 void keepClientInMainThread(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID);
+    /* IO thread no longer manage it. */
+    server.io_threads_clients_num[c->tid]--;
     /* Remove the client from io thread event loop. */
     uninstallHandlerFromIOThreadEventLoop(c);
     /* Let main thread to run it, rebind event loop and read handler */
@@ -77,6 +69,8 @@ void keepClientInMainThread(client *c) {
     c->io_flags |= CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED;
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
     c->tid = IOTHREAD_MAIN_THREAD_ID;
+    /* Main thread starts to manage it. */
+    server.io_threads_clients_num[c->tid]++;
 }
 
 /* If updating maxclients config, we not only resize the event loop of main thread
@@ -96,6 +90,33 @@ int resizeIOThreadsEventLoop(size_t newsize) {
     }
     resumeAllIOThreads();
     return result;
+}
+
+/* When the main thread accepts a new client, it assign the client to the IO thread
+ * with the fewest clients. */
+void assignClientToIOThread(client *c) {
+    /* Find the IO thread with the fewest clients. */
+    int min_id = 0;
+    int min = INT_MAX;
+    for (int i = 1; i < server.io_threads_num; i++) {
+        if (server.io_threads_clients_num[i] < min) {
+            min = server.io_threads_clients_num[i];
+            min_id = i;
+        }
+    }
+
+    /* Assign the client to the IO thread. */
+    c->tid = min_id;
+    c->running_tid = min_id;
+    server.io_threads_clients_num[min_id]++;
+    server.io_threads_clients_num[IOTHREAD_MAIN_THREAD_ID]--;
+
+    /* Uninstall read and write handler, disable read and write, and then put in
+     * the list, main thread will send these clients to IO thread in beforeSleep. */
+    connSetReadHandler(c->conn, NULL);
+    connSetWriteHandler(c->conn, NULL);
+    c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
+    listAddNodeTail(pending_clients_for_io_threads[c->tid], c);
 }
 
 /* In the main thread, we may want to operate data of io threads, maybe uninstall
@@ -119,6 +140,9 @@ int resizeIOThreadsEventLoop(size_t newsize) {
  * resume itself.
  */
 
+/* We may pause the same io thread nestedly, so we need to record the times of
+ * pausing, and only when the times of pausing is 0, we can pause the io thread,
+ * and only when the times of pausing is 1, we can resume the io thread. */
 static int PausedIOThreads[IO_THREADS_MAX_NUM] = {0};
 
 /* Pause the specific range of io threads, and wait for them to be paused. */
@@ -228,7 +252,8 @@ extern int ProcessingEventsWhileBlocked;
  * suitable to be processed in IO threads.
  * Replica, pubsub, monitor, blocked, tracking, watching clients which main thread
  * may directly operate on them when conditions are met, script command with debug
- * may operate connection directly, so we should keep them in the main thread.
+ * may operate connection directly, we may change flags of client in transaction,
+ * so we should keep them in the main thread.
  *
  * Please notice that this function may be called reentrantly, i,e, the same goes
  * for handleClientsFromIOThread and processClientsOfAllIOThreads. For example,
@@ -290,6 +315,7 @@ void processClientsFromIOThread(ioThread *t) {
             c->flags & CLIENT_PUBSUB ||
             c->flags & CLIENT_MONITOR ||
             c->flags & CLIENT_BLOCKED ||
+            c->flags & CLIENT_UNBLOCKED ||
             c->flags & CLIENT_TRACKING ||
             c->flags & CLIENT_MULTI ||
             c->flags & CLIENT_LUA_DEBUG ||
@@ -511,6 +537,8 @@ int ioThreadCron(struct aeEventLoop *eventLoop, long long id, void *ptr) {
 
         /* The client is asked to close, let main thread to free finally. */
         if (isClientClosing(c)) {
+            connSetReadHandler(c->conn, NULL);
+            connSetWriteHandler(c->conn, NULL);
             putInPendingClienstForMainThread(c);
             continue;
         }

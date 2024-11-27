@@ -319,6 +319,9 @@ start_server {tags {"introspection"}} {
         $rd read ; # Discard the OK
         
         $bc blpop mylist 0
+        # make sure the blpop arrives first
+        $bc flush
+        after 100
         wait_for_blocked_clients_count 1
         r lpush mylist 1
         wait_for_blocked_clients_count 0
@@ -919,3 +922,57 @@ test {CONFIG REWRITE handles alias config properly} {
         assert_equal [r config get hash-max-listpack-entries] {hash-max-listpack-entries 100}
     }
 } {} {external:skip}
+
+test {IO threads client number} {
+    start_server {overrides {io-threads 2} tags {external:skip}} {
+        set iothread_clients [s io_thread_1_clients]
+        assert_equal $iothread_clients [s connected_clients]
+        assert_equal [s main_thread_clients] 0
+        r script debug yes ; # Transfer to main thread
+        assert_equal [s main_thread_clients] 1
+        assert_equal [s io_thread_1_clients] [expr $iothread_clients - 1]
+
+        set iothread_clients [s io_thread_1_clients]
+        set rd1 [redis_deferring_client]
+        set rd2 [redis_deferring_client]
+        assert_equal [s io_thread_1_clients] [expr $iothread_clients + 2]
+        $rd1 close
+        $rd2 close
+        wait_for_condition 1000 10 {
+            [s io_thread_1_clients] eq $iothread_clients
+        } else {
+            fail "Fail to close clients of io thread 1"
+        }
+        assert_equal [s main_thread_clients] 1
+    }
+}
+
+test {Clients are evenly distributed among io threads} {
+    start_server {overrides {io-threads 4} tags {external:skip}} {
+        set cur_clients [s connected_clients]
+        assert_equal $cur_clients 1
+        global rdclients
+        for {set i 1} {$i < 9} {incr i} {
+            set rdclients($i) [redis_deferring_client]
+        }
+        for {set i 1} {$i <= 3} {incr i} {
+            assert_equal [s io_thread_${i}_clients] 3
+        }
+
+        $rdclients(3) close
+        $rdclients(4) close
+        wait_for_condition 1000 10 {
+            [s io_thread_1_clients] eq 2 &&
+            [s io_thread_2_clients] eq 2 &&
+            [s io_thread_3_clients] eq 3
+        } else {
+            fail "Fail to close clients"
+        }
+
+        set  $rdclients(3) [redis_deferring_client]
+        set  $rdclients(4) [redis_deferring_client]
+        for {set i 1} {$i <= 3} {incr i} {
+            assert_equal [s io_thread_${i}_clients] 3
+        }
+    }
+}
