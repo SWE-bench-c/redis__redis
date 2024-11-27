@@ -1,5 +1,20 @@
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).
 
+History
+---
+
+Redis the project was essentially taken over by a company that had nothing to do with its development.
+Salvatore Sanfilippo (antirez) started Redis and developed it by himself from 2009 to 2015, gaining massive popularity and building a large community in the process. It was FOSS the entire time.
+
+A separate VC-backed company called Garantia Data used to make money by offering a hosted version of Redis. That company changed its name to Redis Labs in 2014 (and eventually just Redis), likely themselves violating antirez's Redis trademark at the time.
+
+They then hired antirez in 2015 and started officially sponsoring the project.
+
+From there began a slow transformation of Redis from a community run FOSS project to a proprietary locked down service. The company also managed to acquire full rights of the Redis trademark and project stewardship from antirez after hiring him and then finally kicked him out in 2020.
+
+Reference:
+[0] https://news.ycombinator.com/item?id=42256981
+
 What is Redis?
 ---
 
