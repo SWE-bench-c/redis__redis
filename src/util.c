@@ -210,14 +210,14 @@ int prefixmatch(const char *pattern, int patternLen,
     int skipLongerMatches = 0;
     
     /* Step 1: Verify if the pattern matches the prefix string completely. */
-    if (!stringmatchlen_impl(pattern,patternLen,prefixStr,prefixStrLen,nocase,&skipLongerMatches,0))
+    if (!stringmatchlen_impl(pattern, patternLen, prefixStr, prefixStrLen, nocase, &skipLongerMatches, 0))
         return 0;
 
     /* Step 2: Verify that the pattern ends with an unescaped '*', indicating
      * it can match any suffix of the string beyond the prefix. This check
      * remains outside stringmatchlen_impl() to keep its complexity manageable.
      */
-    if (patternLen == 0 || pattern[patternLen - 1] != '*')
+    if (pattern[patternLen - 1] != '*' || patternLen == 0)
         return 0;
 
     /* Count backward the number of consecutive backslashes preceding the '*'
@@ -225,7 +225,7 @@ int prefixmatch(const char *pattern, int patternLen,
     int backslashCount = 0;
     for (int i = patternLen - 2; i >= 0; i--) {
         if (pattern[i] == '\\')
-            backslashCount++;
+            ++backslashCount;
         else
             break; /* Stop counting when a non-backslash character is found. */
     }
