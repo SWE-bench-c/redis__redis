@@ -761,14 +761,14 @@ dictEntry *dictFind(dict *d, const void *key)
         idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
 
         /* Prefetch the bucket at the calculated index */
-        __builtin_prefetch(&d->ht_table[table][idx], 0, 1);
+        redis_prefetch_read(&d->ht_table[table][idx]);
 
         he = d->ht_table[table][idx];
         while(he) {
             void *he_key = dictGetKey(he);
 
             /* Prefetch the next entry to improve cache efficiency */
-            __builtin_prefetch(dictGetNext(he), 0, 1);
+            redis_prefetch_read(dictGetNext(he));
 
             if (key == he_key || cmpFunc(d, key, he_key))
                 return he;
