@@ -68,6 +68,7 @@ static dictEntry *dictGetNext(const dictEntry *de);
 static dictEntry **dictGetNextRef(dictEntry *de);
 static void dictSetNext(dictEntry *de, dictEntry *next);
 static int dictDefaultCompare(dict *d, const void *key1, const void *key2);
+static void *dictFindInsertForNonExistingKey(dict *d, const void *key);
 
 /* -------------------------- misc inline functions -------------------------------- */
 
@@ -502,6 +503,31 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     /* Get the position for the new key or NULL if the key already exists. */
     void *position = dictFindPositionForInsert(d, key, existing);
     if (!position) return NULL;
+
+    /* Dup the key if necessary. */
+    if (d->type->keyDup) key = d->type->keyDup(d, key);
+
+    return dictInsertAtPosition(d, key, position);
+}
+
+/* Low-level add function for non-existing keys:
+ * This function adds a new entry to the dictionary, assuming the key does not
+ * already exist.
+ * Parameters:
+ * - `dict *d`: Pointer to the dictionary structure.
+ * - `void *key`: Pointer to the key being added.
+ * Guarantees:
+ * - The key is assumed to be non-existing, and its corresponding bucket is found
+ *   using `dictFindInsertForNonExistingKey`.
+ * - The function will assert if `dictFindInsertForNonExistingKey` returns NULL,
+ *   which should not happen under correct usage.
+ * Note:
+ * Ensure that the key's uniqueness is managed externally before calling this function. */
+dictEntry *dictAddNonExistingRaw(dict *d, void *key)
+{
+    /* Get the position for the new key, it should never be NULL. */
+    void *position = dictFindInsertForNonExistingKey(d, key);
+    assert(position!=NULL);
 
     /* Dup the key if necessary. */
     if (d->type->keyDup) key = d->type->keyDup(d, key);
@@ -1614,6 +1640,40 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
     return bucket;
 }
 
+/* Finds the bucket in the dictionary where a non-existing key should be inserted.
+ * Assumes that the key does not already exist in the dictionary.
+ *
+ * Parameters:
+ *   - dict *d: Pointer to the dictionary.
+ *   - const void *key: The key for which an insertion position is being determined.
+ *
+ * Returns:
+ *   - Pointer to the bucket where the new key should be inserted.
+ *     The bucket is guaranteed to be in the appropriate hash table based on the rehashing state. */
+static void *dictFindInsertForNonExistingKey(dict *d, const void *key) {
+    unsigned long idx, table;
+    uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
+
+    if (dictIsRehashing(d)) {
+        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
+            /* Rehash the bucket at idx if applicable */
+            _dictBucketRehash(d, idx);
+        } else {
+            /* Perform a single-step rehash */
+            _dictRehashStep(d);
+        }
+    }
+
+    /* Expand the hash table if needed */
+    _dictExpandIfNeeded(d);
+
+    /* Always return the bucket in the correct table */
+    table = dictIsRehashing(d) ? 1 : 0;
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+    return &d->ht_table[table][idx];
+}
+
 void dictEmpty(dict *d, void(callback)(dict*)) {
     /* Someone may be monitoring a dict that started rehashing, before
      * destroying the dict fake completion. */
@@ -1821,6 +1881,13 @@ char *stringFromLongLong(long long value) {
     return s;
 }
 
+char *stringFromSubstring(const char *largeString, size_t startIndex, size_t length) {
+    char *s = zmalloc(length + 1); // Allocate memory for the substring (+1 for null terminator)
+    memcpy(s, largeString + startIndex, length); // Copy the substring
+    s[length] = '\0'; // Null-terminate the string
+    return s;
+}
+
 dictType BenchmarkDictType = {
     hashCallback,
     NULL,
@@ -1843,6 +1910,8 @@ int dictTest(int argc, char **argv, int flags) {
     long long start, elapsed;
     int retval;
     dict *dict = dictCreate(&BenchmarkDictType);
+    dictEntry* de = NULL;
+    dictEntry* existing = NULL;
     long count = 0;
     unsigned long new_dict_size, current_dict_used, remain_keys;
     int accurate = (flags & REDIS_TEST_ACCURATE);
@@ -1982,13 +2051,68 @@ int dictTest(int argc, char **argv, int flags) {
         dictEmpty(dict, NULL);
         dictSetResizeEnabled(DICT_RESIZE_ENABLE);
     }
+    srand(12345);
+    #define LARGE_STRING_SIZE 10000
+    #define MIN_STRING_SIZE 100
+    #define MAX_STRING_SIZE 500
+    // Generate a large string
+    char largeString[LARGE_STRING_SIZE + 1];
+    for (size_t i = 0; i < LARGE_STRING_SIZE; i++) {
+        largeString[i] = 33 + (rand() % 94); // Random printable ASCII character (33 to 126)
+    }
+    largeString[LARGE_STRING_SIZE] = '\0'; // Null-terminate the large string
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        // Randomly choose a size between MIN_STRING_SIZE and MAX_STRING_SIZE
+        size_t substringSize = MIN_STRING_SIZE + (rand() % (MAX_STRING_SIZE - MIN_STRING_SIZE + 1));
+        size_t startIndex = rand() % (LARGE_STRING_SIZE - substringSize + 1);
+
+        // Create a dynamically allocated substring
+        char *key = stringFromSubstring(largeString, startIndex, substringSize);
+
+        // Insert the range directly from the large string
+        de = dictAddRaw(dict, key, &existing);
+        assert(de != NULL || existing != NULL);
+    }
+    end_benchmark("Inserting random substrings (100-500B) from large string with symbols");
+    assert((long)dictSize(dict) <= count);
+    dictEmpty(dict, NULL);
 
     start_benchmark();
     for (j = 0; j < count; j++) {
         retval = dictAdd(dict,stringFromLongLong(j),(void*)j);
         assert(retval == DICT_OK);
     }
-    end_benchmark("Inserting");
+    end_benchmark("Inserting via dictAdd() non existing");
+    assert((long)dictSize(dict) == count);
+
+    dictEmpty(dict, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        de = dictAddRaw(dict,stringFromLongLong(j),NULL);
+        assert(de != NULL);
+    }
+    end_benchmark("Inserting via dictAddRaw() non existing");
+    assert((long)dictSize(dict) == count);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        de = dictAddRaw(dict,stringFromLongLong(j),&existing);
+        assert(existing != NULL);
+    }
+    end_benchmark("Inserting via dictAddRaw() existing (no insertion)");
+    assert((long)dictSize(dict) == count);
+
+    dictEmpty(dict, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        de = dictAddNonExistingRaw(dict,stringFromLongLong(j));
+        assert(de != NULL);
+    }
+    end_benchmark("Inserting via dictAddNonExistingRaw() non existing");
     assert((long)dictSize(dict) == count);
 
     /* Wait for rehashing. */
