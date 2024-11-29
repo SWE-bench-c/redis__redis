@@ -680,9 +680,9 @@ static inline unsigned char *lpGetWithSize(unsigned char *p, int64_t *count, uns
 static inline unsigned char *lpGetWithBuf(unsigned char *p, int64_t *count, unsigned char *intbuf) {
     int64_t val;
     uint64_t uval, negstart, negmax;
+    assert(p); /* assertion for valgrind (avoid NPD) */
     const unsigned char encoding = p[0];
 
-    assert(p); /* assertion for valgrind (avoid NPD) */
     /* string encoding */
     if (LP_ENCODING_IS_6BIT_STR(encoding)) {
         *count = LP_ENCODING_6BIT_STR_LEN(p);
