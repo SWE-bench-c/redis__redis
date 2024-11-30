@@ -398,7 +398,6 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
 
     /* We update the buffer peak always */
     const size_t available = c->buf_usable_size - c->bufpos;
-    c->buf_peak = max(c->buf_peak,(size_t)available);
 
     /* If there already are entries in the reply list or the added length surpasses the buffer,
      * we cannot add anything more to the static buffer. */
@@ -409,6 +408,8 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
         /* Add reply to the static buffer in the client struct. */
         memcpy(c->buf+c->bufpos,s,len);
         c->bufpos+=len;
+        /* We update the buffer peak after appending the reply to the buffer */
+        c->buf_peak = max(c->buf_peak,(size_t)available);
     }
 }
 
