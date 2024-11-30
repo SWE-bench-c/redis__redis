@@ -101,11 +101,9 @@
 #endif
 #endif
 
-/* Test for __builtin_prefetch() */
-/* Supported in LLVM since 2.9:
- * https://releases.llvm.org/2.9/docs/ReleaseNotes.html */
-/* Supported in GCC since 3.1:
- * https://gcc.gnu.org/gcc-3.1/changes.html */
+/* Test for __builtin_prefetch()
+ * Supported in LLVM since 2.9: https://releases.llvm.org/2.9/docs/ReleaseNotes.html
+ * Supported in GCC since 3.1: https://gcc.gnu.org/gcc-3.1/changes.html. */
 #if defined(__clang__) && (__clang_major__ > 2 || (__clang_major__ == 2 && __clang_minor__ >= 9))
 #define HAS_BUILTIN_PREFETCH 1
 #elif defined(__GNUC__) && (__GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ >= 1))
