@@ -1590,6 +1590,7 @@ void pfmergeCommand(client *c) {
     /* Write the resulting HLL to the destination HLL registers and
      * invalidate the cached value. */
     if (use_dense) {
+        hdr = o->ptr;
         hllDenseCompress(hdr->registers, max);
     } else {
         for (j = 0; j < HLL_REGISTERS; j++) {
