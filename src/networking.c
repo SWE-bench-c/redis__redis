@@ -409,7 +409,7 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
         memcpy(c->buf+c->bufpos,s,len);
         c->bufpos+=len;
         /* We update the buffer peak after appending the reply to the buffer */
-        c->buf_peak = max(c->buf_peak,(size_t)available);
+        c->buf_peak = max(c->buf_peak,(size_t)c->bufpos);
     }
 }
 
