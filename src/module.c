@@ -5358,6 +5358,10 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
  * expecting a RedisModuleString pointer to pointer, the function just
  * reports if the field exists or not and expects an integer pointer
  * as the second element of each pair.
+ * 
+ * REDISMODULE_HASH_EXPIRE_TIME: retrieves the expiration time of a field in the hash.
+ * The function expects a `mstime_t` pointer as the second element of each pair.
+ * If the field exists but has no expiration time, `REDISMODULE_NO_EXPIRE` is set. 
  *
  * Example of REDISMODULE_HASH_CFIELDS:
  *
@@ -5367,8 +5371,13 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
  * Example of REDISMODULE_HASH_EXISTS:
  *
  *      int exists;
- *      RedisModule_HashGet(mykey,REDISMODULE_HASH_EXISTS,argv[1],&exists,NULL);
+ *      RedisModule_HashGet(mykey,REDISMODULE_HASH_EXISTS,"username",&exists,NULL);
  *
+ * Example of REDISMODULE_HASH_EXPIRE_TIME:
+ *
+ *      mstime_t hpExpireTime; 
+ *      RedisModule_HashGet(mykey,REDISMODULE_HASH_EXPIRE_TIME,"hp",&hpExpireTime,NULL);
+ *      
  * The function returns REDISMODULE_OK on success and REDISMODULE_ERR if
  * the key is not a hash value.
  *
@@ -5407,11 +5416,22 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
             } else {
                 *existsptr = 0;
             }
+        } if (flags & REDISMODULE_HASH_EXPIRE_TIME) {
+            mstime_t *expireptr = va_arg(ap,mstime_t*);            
+            *expireptr = REDISMODULE_NO_EXPIRE;
+            if (key->value) {
+                uint64_t expireTime = 0;
+                /* As an opt, avoid fetching value, only expire time */
+                int res = hashTypeGetValueObject(key->db, key->value, field->ptr,
+                                                 hfeFlags, NULL, &expireTime, NULL);
+                /* If field has expiration time */
+                if (res && expireTime != 0) *expireptr = expireTime;
+            }
         } else {
             valueptr = va_arg(ap,RedisModuleString**);
             if (key->value) {
-                *valueptr = hashTypeGetValueObject(key->db, key->value, field->ptr,
-                                                   hfeFlags, NULL);
+                hashTypeGetValueObject(key->db, key->value, field->ptr,
+                                       hfeFlags, valueptr, NULL, NULL);
 
                 if (*valueptr) {
                     robj *decoded = getDecodedObject(*valueptr);
@@ -5430,6 +5450,14 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
     }
     va_end(ap);
     return REDISMODULE_OK;
+}
+
+mstime_t RM_HashFieldMinExpire(RedisModuleKey *key) {
+    if (key->value && key->value->type != OBJ_HASH) 
+        return REDISMODULE_ERR;
+    
+    mstime_t min = hashTypeGetMinExpire(key->value, 1);
+    return (min == EB_EXPIRE_TIME_INVALID) ? REDISMODULE_NO_EXPIRE : min;
 }
 
 /* --------------------------------------------------------------------------
@@ -14027,6 +14055,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(ZsetRangeEndReached);
     REGISTER_API(HashSet);
     REGISTER_API(HashGet);
+    REGISTER_API(HashFieldMinExpire);
     REGISTER_API(StreamAdd);
     REGISTER_API(StreamDelete);
     REGISTER_API(StreamIteratorStart);
