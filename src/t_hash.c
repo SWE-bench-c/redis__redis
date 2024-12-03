@@ -717,7 +717,7 @@ GetFieldRes hashTypeGetFromHashTable(robj *o, sds field, sds *value, uint64_t *e
  *                always check the function return by checking the return value
  *                for GETF_OK and checking if vll (or vstr) is NULL.
  * expiredAt    - if the field has an expiration time, it will be set to the expiration 
- *                time of the field. Otherwise, wll be set to EB_EXPIRE_TIME_INVALID.
+ *                time of the field. Otherwise, will be set to EB_EXPIRE_TIME_INVALID.
  */
 GetFieldRes hashTypeGetValue(redisDb *db, robj *o, sds field, unsigned char **vstr,
                                    unsigned int *vlen, long long *vll, 
