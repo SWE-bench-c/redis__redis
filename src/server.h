@@ -402,7 +402,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CLIENT_IO_WRITE_ENABLED (1ULL<<1) /* Client can write to socket. */
 #define CLIENT_IO_PENDING_COMMAND (1ULL<<2) /* Similar to CLIENT_PENDING_COMMAND. */
 #define CLIENT_IO_REUSABLE_QUERYBUFFER (1ULL<<3) /* The client is using the reusable query buffer. */
-#define CLIENT_IO_CLOSE_ASYNC (1ULL<<4) /* Close this client async */
+#define CLIENT_IO_CLOSE_ASAP (1ULL<<4) /* Close this client ASAP in IO thread. */
 
 /* Definitions for client read errors. These error codes are used to indicate
  * various issues that can occur while reading or parsing data from a client. */
@@ -1194,10 +1194,11 @@ typedef struct {
 typedef struct client {
     uint64_t id;            /* Client incremental unique ID. */
     uint64_t flags;         /* Client flags: CLIENT_* macros. */
-    uint8_t io_flags;      /* Accessed by both main and IO threads, but not modified concurrently */
     connection *conn;
-    int tid;                /* Thread ID this client is bound to. */
-    int running_tid;        /* Thread ID this client is running on. */
+    uint8_t tid;            /* Thread ID this client is bound to. */
+    uint8_t running_tid;    /* Thread ID this client is running on. */
+    uint8_t io_flags;       /* Accessed by both main and IO threads, but not modified concurrently */
+    uint8_t read_error;     /* Client read error: CLIENT_READ_* macros. */
     int resp;               /* RESP protocol version. Can be 2 or 3. */
     redisDb *db;            /* Pointer to currently SELECTed DB. */
     robj *name;             /* As set by CLIENT SETNAME. */
@@ -1206,7 +1207,6 @@ typedef struct client {
     sds querybuf;           /* Buffer we use to accumulate client queries. */
     size_t qb_pos;          /* The position we have read in querybuf. */
     size_t querybuf_peak;   /* Recent (100ms or more) peak of querybuf size. */
-    int in_reusable_querybuf; /* Flag to indicate that the reusable querybuf is in use. */
     int argc;               /* Num of arguments of current command. */
     robj **argv;            /* Arguments of current command. */
     int argv_len;           /* Size of argv array (may be more than argc) */
@@ -1268,7 +1268,6 @@ typedef struct client {
     listNode *client_list_node; /* list node in client list */
     listNode *io_thread_client_list_node; /* list node in io thread client list */
     listNode *postponed_list_node; /* list node within the postponed list */
-    listNode *pending_read_list_node; /* list node in clients pending read list */
     void *module_blocked_client; /* Pointer to the RedisModuleBlockedClient associated with this
                                   * client. This is set in case of module authentication before the
                                   * unblocked client is reprocessed to handle reply callbacks. */
@@ -1319,19 +1318,20 @@ typedef struct client {
 #ifdef LOG_REQ_RES
     clientReqResInfo reqres;
 #endif
-    uint16_t read_error; /* Client read error: CLIENT_READ_* macros. */
 } client;
 
 typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) {
-    long id;                                    /* The unique ID assigned. */
+    uint8_t id;                                 /* The unique ID assigned, if IO_THREADS_MAX_NUM is more
+                                                 * than 256, we should also promote the data type. */
     pthread_t tid;                              /* Thread ID */
+    redisAtomic int paused;                     /* Paused status for the io thread. */
     aeEventLoop *el;                            /* Main event loop of io thread. */
     list *pending_clients;                      /* List of clients with pending writes. */
+    list *processing_clients;                   /* List of clients being processed. */
     eventNotifier *pending_clients_notifier;    /* Used to wake up the loop when write should be performed. */
     pthread_mutex_t pending_clients_mutex;      /* Mutex for pending write list */
     list *pending_clients_for_main_thread;      /* Clients that are waiting to be executed by the main thread. */
     list *clients;                              /* IO thread managed clients. */
-    redisAtomic int paused;                     /* Paused status for the io thread. */
 } IOThread;
 
 /* ACL information */
@@ -2762,6 +2762,7 @@ void uninstallHandlerFromIOThreadEventLoop(client *c);
 void processClientsOfAllIOThreads(void);
 void assignClientToIOThread(client *c);
 void fetchClientFromIOThread(client *c);
+int isClientMustHandledByMainThread(client *c);
 
 /* logreqres.c - logging of requests and responses */
 void reqresReset(client *c, int free_buf);

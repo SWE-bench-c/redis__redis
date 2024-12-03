@@ -151,7 +151,6 @@ client *createClient(connection *conn) {
     c->qb_pos = 0;
     c->querybuf = NULL;
     c->querybuf_peak = 0;
-    c->in_reusable_querybuf = 0;
     c->reqtype = 0;
     c->argc = 0;
     c->argv = NULL;
@@ -200,7 +199,6 @@ client *createClient(connection *conn) {
     c->client_list_node = NULL;
     c->io_thread_client_list_node = NULL;
     c->postponed_list_node = NULL;
-    c->pending_read_list_node = NULL;
     c->client_tracking_redirection = 0;
     c->client_tracking_prefixes = NULL;
     c->last_memory_usage = 0;
@@ -1538,14 +1536,6 @@ void unlinkClient(client *c) {
         c->flags &= ~CLIENT_PENDING_WRITE;
     }
 
-    /* Remove from the list of pending reads if needed. */
-    serverAssert(!c->conn || c->running_tid == IOTHREAD_MAIN_THREAD_ID);
-    if (c->pending_read_list_node != NULL) {
-        listDelNode(server.clients_pending_read,c->pending_read_list_node);
-        c->pending_read_list_node = NULL;
-    }
-
-
     /* When client was just unblocked because of a blocking operation,
      * remove it from the list of unblocked clients. */
     if (c->flags & CLIENT_UNBLOCKED) {
@@ -1650,7 +1640,7 @@ void freeClient(client *c) {
         return;
     }
 
-    /* If the client is running in a io thread, we can't free it directly. */
+    /* If the client is running in io thread, we can't free it directly. */
     if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
         fetchClientFromIOThread(c);
     }
@@ -1825,8 +1815,8 @@ void freeClientAsync(client *c) {
         int main_thread = pthread_equal(pthread_self(), server.main_thread_id);
         /* Make sure the main thread can access IO thread data safely. */
         if (main_thread) pauseIOThread(c->tid);
-        if (!(c->flags & CLIENT_IO_CLOSE_ASYNC)) {
-            c->io_flags |= CLIENT_IO_CLOSE_ASYNC;
+        if (!(c->flags & CLIENT_IO_CLOSE_ASAP)) {
+            c->io_flags |= CLIENT_IO_CLOSE_ASAP;
             putInPendingClienstForMainThread(c, 1);
         }
         if (main_thread) resumeIOThread(c->tid);
@@ -2160,6 +2150,15 @@ int handleClientsWithPendingWrites(void) {
 
         /* Don't write to clients that are going to be closed anyway. */
         if (c->flags & CLIENT_CLOSE_ASAP) continue;
+
+        /* Let IO thread handle the client if possible. */
+        if (server.io_threads_num > 1 &&
+            !(c->flags & CLIENT_CLOSE_AFTER_REPLY) &&
+            !isClientMustHandledByMainThread(c))
+        {
+            assignClientToIOThread(c);
+            continue;
+        }
 
         /* Try to write buffers to the client socket. */
         if (writeToClient(c,0) == C_ERR) continue;
@@ -2997,7 +2996,7 @@ char *getClientSockname(client *c) {
 sds catClientInfoString(sds s, client *client) {
     char flags[17], events[3], conninfo[CONN_INFO_LEN], *p;
 
-    /* NOTE: must resume io thread before exiting this function. */
+    /* Pause IO thread to access data of the client safely. */
     int paused = 0;
     if (client->running_tid != IOTHREAD_MAIN_THREAD_ID &&
         pthread_equal(server.main_thread_id, pthread_self()) &&
@@ -3094,8 +3093,8 @@ sds getAllClientsInfoString(int type) {
     sds o = sdsnewlen(SDS_NOINIT,200*listLength(server.clients));
     sdsclear(o);
 
-    /* Pause all io threads if there are enough clients, since
-     * catClientInfoString also can pause client if needed. */
+    /* Pause all IO threads to access data of clients safely, and pausing the
+     * specific IO thread will not repeatedly execute in catClientInfoString. */
     int allpaused = 0;
     if (server.io_threads_num > 1 && !server.crashing &&
         (type == CLIENT_TYPE_NORMAL || type == -1) &&

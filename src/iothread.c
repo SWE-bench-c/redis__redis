@@ -73,7 +73,8 @@ void keepClientInMainThread(client *c) {
 }
 
 /* If the client is managed by IO thread, we should fetch it from IO thread
- * and then main thread will can process it. */
+ * and then main thread will can process it. Just like IO Thread transfers
+ * the client to the main thread for processing. */
 void fetchClientFromIOThread(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
                  c->running_tid != IOTHREAD_MAIN_THREAD_ID);
@@ -107,27 +108,26 @@ void fetchClientFromIOThread(client *c) {
     resumeIOThread(c->tid);
 }
 
-/* If updating maxclients config, we not only resize the event loop of main thread
- * but also resize the event loop of all io threads, and if one thread is failed,
- * it is failed totally, since a fd can be distributed into any IO thread. */
-int resizeIOThreadsEventLoop(size_t newsize) {
-    int result = AE_OK;
-    if (server.io_threads_num <= 1) return result;
-
-    /* To make context safe. */
-    pauseAllIOThreads();
-    for (int i = 1; i < server.io_threads_num; i++) {
-        IOThread *t = &IOThreads[i];
-        /* If one thread is failed, it is failed totally. */
-        if (aeResizeSetSize(t->el, newsize) == AE_ERR)
-            result = AE_ERR;
+/* For some clients, we must handle them in the main thread, since there is
+ * data race to be processed in IO threads.
+ *
+ * - Close ASAP, we must free the client in main thread.
+ * - Replica, pubsub, monitor, blocked, tracking clients, main thread may
+ *   directly write them a reply when conditions are met.
+ * - Script command with debug may operate connection directly. */
+int isClientMustHandledByMainThread(client *c) {
+    if (c->flags & (CLIENT_CLOSE_ASAP | CLIENT_MASTER | CLIENT_SLAVE |
+                    CLIENT_PUBSUB | CLIENT_MONITOR | CLIENT_BLOCKED |
+                    CLIENT_UNBLOCKED | CLIENT_TRACKING | CLIENT_LUA_DEBUG |
+                    CLIENT_LUA_DEBUG_SYNC))
+    {
+        return 1;
     }
-    resumeAllIOThreads();
-    return result;
+    return 0;
 }
 
-/* When the main thread accepts a new client, it assign the client to the IO thread
- * with the fewest clients. */
+/* When the main thread accepts a new client or transfers clients to IO threads,
+ * it assign the client to the IO thread with the fewest clients. */
 void assignClientToIOThread(client *c) {
     /* Find the IO thread with the fewest clients. */
     int min_id = 0;
@@ -140,10 +140,10 @@ void assignClientToIOThread(client *c) {
     }
 
     /* Assign the client to the IO thread. */
+    server.io_threads_clients_num[c->tid]--;
     c->tid = min_id;
     c->running_tid = min_id;
     server.io_threads_clients_num[min_id]++;
-    server.io_threads_clients_num[IOTHREAD_MAIN_THREAD_ID]--;
 
     /* Uninstall read and write handler, disable read and write, and then put in
      * the list, main thread will send these clients to IO thread in beforeSleep. */
@@ -151,6 +151,24 @@ void assignClientToIOThread(client *c) {
     connSetWriteHandler(c->conn, NULL);
     c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
     listAddNodeTail(pendingClientsForIOThreads[c->tid], c);
+}
+
+/* If updating maxclients config, we not only resize the event loop of main thread
+ * but also resize the event loop of all io threads, and if one thread is failed,
+ * it is failed totally, since a fd can be distributed into any IO thread. */
+int resizeIOThreadsEventLoop(size_t newsize) {
+    int result = AE_OK;
+    if (server.io_threads_num <= 1) return result;
+
+    /* To make context safe. */
+    pauseAllIOThreads();
+    for (int i = 1; i < server.io_threads_num; i++) {
+        IOThread *t = &IOThreads[i];
+        if (aeResizeSetSize(t->el, newsize) == AE_ERR)
+            result = AE_ERR;
+    }
+    resumeAllIOThreads();
+    return result;
 }
 
 /* In the main thread, we may want to operate data of io threads, maybe uninstall
@@ -282,13 +300,6 @@ extern int ProcessingEventsWhileBlocked;
  * a complete command to execute or need to be freed. Note that IO threads never
  * free client since this operation access much server data.
  *
- * And for some clients, we may keep them in the main thread, since they are not
- * suitable to be processed in IO threads.
- * Replica, pubsub, monitor, blocked, tracking, watching clients which main thread
- * may directly operate on them when conditions are met, script command with debug
- * may operate connection directly, we may change flags of client in transaction,
- * so we should keep them in the main thread.
- *
  * Please notice that this function may be called reentrantly, i,e, the same goes
  * for handleClientsFromIOThread and processClientsOfAllIOThreads. For example,
  * when processing script command, it may call processEventsWhileBlocked to
@@ -317,8 +328,8 @@ void processClientsFromIOThread(IOThread *t) {
          * want to print logs about client information before freeing. */
         if (c->read_error) handleClientReadError(c);
 
-        /* The client is asked to close. */
-        if (c->io_flags & CLIENT_IO_CLOSE_ASYNC) {
+        /* The client is asked to close in IO thread. */
+        if (c->io_flags & CLIENT_IO_CLOSE_ASAP) {
             freeClient(c);
             continue;
         }
@@ -344,40 +355,20 @@ void processClientsFromIOThread(IOThread *t) {
 
         /* The client only can be processed in the main thread, otherwise data
          * race will happen, since we may touch client's data in main thread. */
-        if (c->flags & CLIENT_CLOSE_ASAP ||
-            c->flags & CLIENT_SLAVE ||
-            c->flags & CLIENT_PUBSUB ||
-            c->flags & CLIENT_MONITOR ||
-            c->flags & CLIENT_BLOCKED ||
-            c->flags & CLIENT_UNBLOCKED ||
-            c->flags & CLIENT_TRACKING ||
-            c->flags & CLIENT_MULTI ||
-            c->flags & CLIENT_LUA_DEBUG ||
-            c->flags & CLIENT_LUA_DEBUG_SYNC)
-        {
+        if (isClientMustHandledByMainThread(c)) {
             keepClientInMainThread(c);
             continue;
         }
 
-        /* If the client is still valid, let io threads handle its writing. */
-        if (c->flags & CLIENT_PENDING_WRITE ||
-            c->flags & (CLIENT_REPLY_SKIP|CLIENT_REPLY_OFF|CLIENT_REPLY_SKIP_NEXT))
-        {
-            /* Remove this client from pending write clients queue of main thread. */
-            if (c->flags & CLIENT_PENDING_WRITE) {
-                c->flags &= ~CLIENT_PENDING_WRITE;
-                listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
-            }
-            c->running_tid = c->tid;
-            listLinkNodeHead(pendingClientsForIOThreads[c->tid], node);
-            node = NULL;
-            continue;
+        /* Remove this client from pending write clients queue of main thread,
+         * And some clients may do not have reply if CLIENT REPLY OFF/SKIP. */
+        if (c->flags & CLIENT_PENDING_WRITE) {
+            c->flags &= ~CLIENT_PENDING_WRITE;
+            listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
         }
-
-        /* TODO: remaining clients are handled by main thread, what's the client status?
-         * it should not reach here? */
-        serverPanic("Unknown client status");
-        keepClientInMainThread(c); /* Keep it mian thread if we don't know its status? */
+        c->running_tid = c->tid;
+        listLinkNodeHead(pendingClientsForIOThreads[c->tid], node);
+        node = NULL;
     }
     if (node) zfree(node);
 
@@ -456,23 +447,19 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
     serverAssert(fd == getReadEventFd(t->pending_clients_notifier));
     handleEventNotifier(t->pending_clients_notifier);
 
-    list *clients = listCreate();
     pthread_mutex_lock(&t->pending_clients_mutex);
-    listJoin(clients, t->pending_clients);
+    listJoin(t->processing_clients, t->pending_clients);
     pthread_mutex_unlock(&t->pending_clients_mutex);
-    if (listLength(clients) == 0) {
-        listRelease(clients);
-        return;
-    }
+    if (listLength(t->processing_clients) == 0) return;
 
     listIter li;
     listNode *ln;
-    listRewind(clients, &li);
+    listRewind(t->processing_clients, &li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
         serverAssert(!(c->io_flags & (CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED)));
         /* Main thread must handle clients with CLIENT_CLOSE_ASAP flag, since
-         * we only set 'closing' state when clients in io thread are freed ASAP. */
+         * we only set io_flags when clients in io thread are freed ASAP. */
         serverAssert(!(c->flags & CLIENT_CLOSE_ASAP));
 
         /* Link client in IO thread clients list first. */
@@ -481,7 +468,7 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
         c->io_thread_client_list_node = listLast(t->clients);
 
         /* The client is asked to close, we just let main thread free it. */
-        if (c->io_flags & CLIENT_IO_CLOSE_ASYNC) {
+        if (c->io_flags & CLIENT_IO_CLOSE_ASAP) {
             putInPendingClienstForMainThread(c, 1);
             continue;
         }
@@ -499,12 +486,12 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
         /* If the client has pending replies, write replies to client. */
         if (clientHasPendingReplies(c)) {
             writeToClient(c, 0);
-            if (!(c->io_flags & CLIENT_IO_CLOSE_ASYNC) && clientHasPendingReplies(c)) {
+            if (!(c->io_flags & CLIENT_IO_CLOSE_ASAP) && clientHasPendingReplies(c)) {
                 connSetWriteHandler(c->conn, sendReplyToClient);
             }
         }
     }
-    listRelease(clients);
+    listEmpty(t->processing_clients);
 }
 
 void IOThreadBeforeSleep(struct aeEventLoop *el) {
@@ -535,47 +522,16 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
     }
 }
 
-#define IO_THREAD_CRON_CLIENTS_ITERATIONS 10
-/* Do the cron job in IO thread, now only support to handle clients and check. */
-int IOThreadCron(struct aeEventLoop *eventLoop, long long id, void *ptr) {
-    UNUSED(eventLoop);
-    UNUSED(id);
-
-    IOThread *t = ptr;
-
-    /* Clients cron in io thread, and iterate over all clients in 1s. */
-    int iterations = max(IO_THREAD_CRON_CLIENTS_ITERATIONS, listLength(t->clients)/10);
-    iterations = min(iterations, (int)listLength(t->clients));
-    while (listLength(t->clients) && iterations--) {
-        listNode *head = listFirst(t->clients);
-        client *c = listNodeValue(head);
-        listRotateHeadToTail(t->clients);
-
-        serverAssert(c->tid == t->id);
-        serverAssert(c->running_tid == t->id);
-        serverAssert(connHasReadHandler(c->conn));
-
-        /* The client is asked to close, let main thread to free finally. */
-        if (c->io_flags & CLIENT_IO_CLOSE_ASYNC) {
-            putInPendingClienstForMainThread(c, 1);
-            continue;
-        }
-    }
-
-    return 100; /* Run once per 100 millisecond */
-}
-
 /* The main function of IO thread, it will run an event loop. The mian thread
  * and IO thread will communicate through event notifier. */
 void *IOThreadMain(void *ptr) {
     IOThread *t = ptr;
     char thdname[16];
-    snprintf(thdname, sizeof(thdname), "io_thd_%ld", t->id);
+    snprintf(thdname, sizeof(thdname), "io_thd_%d", t->id);
     redis_set_thread_title(thdname);
     redisSetCpuAffinity(server.server_cpulist);
     makeThreadKillable();
     aeSetBeforeSleepProc(t->el, IOThreadBeforeSleep);
-    t->el->privdata = t;
     aeMain(t->el);
     return NULL;
 }
@@ -597,7 +553,9 @@ void initThreadedIO(void) {
         IOThread *t = &IOThreads[i];
         t->id = i;
         t->el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
+        t->el->privdata = t;
         t->pending_clients = listCreate();
+        t->processing_clients = listCreate();
         t->pending_clients_for_main_thread = listCreate();
         t->clients = listCreate();
         t->pending_clients_notifier = createEventNotifier();
@@ -614,11 +572,6 @@ void initThreadedIO(void) {
                               AE_READABLE, handleClientsFromMainThread, t) != AE_OK)
         {
             serverLog(LL_WARNING, "Fatal: Can't register file event for IO thread notifications.");
-            exit(1);
-        }
-
-        if (aeCreateTimeEvent(t->el, 1, IOThreadCron, t, NULL) != AE_OK) {
-            serverLog(LL_WARNING, "Fatal: Can't create event loop timers for IO thread.");
             exit(1);
         }
 
