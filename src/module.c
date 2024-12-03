@@ -5452,9 +5452,18 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
     return REDISMODULE_OK;
 }
 
+/**
+ * Retrieves the minimum expiration time of fields in a hash.
+ * 
+ * Return:
+ *   - The minimum expiration time (in milliseconds) of the hash fields if at
+ *     least one field has an expiration set.
+ *   - REDISMODULE_NO_EXPIRE if no fields have an expiration set or if the key
+ *     is not a hash.
+ */
 mstime_t RM_HashFieldMinExpire(RedisModuleKey *key) {
-    if (key->value && key->value->type != OBJ_HASH) 
-        return REDISMODULE_ERR;
+    if (key->value && key->value->type != OBJ_HASH)
+        return REDISMODULE_NO_EXPIRE;
     
     mstime_t min = hashTypeGetMinExpire(key->value, 1);
     return (min == EB_EXPIRE_TIME_INVALID) ? REDISMODULE_NO_EXPIRE : min;

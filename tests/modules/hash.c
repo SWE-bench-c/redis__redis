@@ -160,7 +160,7 @@ int test_open_key_hget_min_expire(RedisModuleCtx *ctx, RedisModuleString **argv,
         return REDISMODULE_OK;
     }
 
-    RedisModuleKey *key = openKeyWithMode(ctx, argv[1], REDISMODULE_OPEN_KEY_ACCESS_EXPIRED);
+    RedisModuleKey *key = openKeyWithMode(ctx, argv[1], REDISMODULE_READ);
     if (!key) return REDISMODULE_OK;
 
     volatile mstime_t minExpire = RedisModule_HashFieldMinExpire(key);
