@@ -2153,6 +2153,45 @@ int dictTest(int argc, char **argv, int flags) {
         dictRehashMicroseconds(dict,100*1000);
     }
 
+    dictEmpty(dict, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        /* Create a key */
+        void *key = stringFromLongLong(j);
+
+        /* Check if the key exists */
+        dictEntry *entry = dictFind(dict, key);
+        assert(entry == NULL);
+
+        /* Add the key */
+        dictEntry *de = dictAddRaw(dict, key, NULL);
+        assert(de != NULL);
+    }
+    end_benchmark("Find() and inserting via dictAddRaw() non existing");
+
+    dictEmpty(dict, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        /* Create a key */
+        void *key = stringFromLongLong(j);
+        uint64_t hash = dictGetHash(dict, key);
+
+         /* Check if the key exists */
+        dictEntry *entry = dictFindWithHash(dict, key, hash);
+        assert(entry == NULL);
+        de = dictAddNonExistingRaw(dict, key, &hash);
+        assert(de != NULL);
+    }
+    end_benchmark("Find() and inserting via dictAddNonExistingRaw() non existing");
+    assert((long)dictSize(dict) == count);
+
+    /* Wait for rehashing. */
+    while (dictIsRehashing(dict)) {
+        dictRehashMicroseconds(dict,100*1000);
+    }
+
     start_benchmark();
     for (j = 0; j < count; j++) {
         char *key = stringFromLongLong(j);
