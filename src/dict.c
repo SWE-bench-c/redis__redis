@@ -2107,6 +2107,8 @@ int dictTest(int argc, char **argv, int flags) {
         // Insert the range directly from the large string
         de = dictAddRaw(dict, key, &existing);
         assert(de != NULL || existing != NULL);
+        // If key already exists NULL is returned so we need to free the temp key string
+        if (de == NULL) zfree(key);
     }
     end_benchmark("Inserting random substrings (100-500B) from large string with symbols");
     assert((long)dictSize(dict) <= count);
@@ -2132,8 +2134,10 @@ int dictTest(int argc, char **argv, int flags) {
 
     start_benchmark();
     for (j = 0; j < count; j++) {
-        de = dictAddRaw(dict,stringFromLongLong(j),&existing);
+        void *key = stringFromLongLong(j);
+        de = dictAddRaw(dict,key,&existing);
         assert(existing != NULL);
+        zfree(key);
     }
     end_benchmark("Inserting via dictAddRaw() existing (no insertion)");
     assert((long)dictSize(dict) == count);
