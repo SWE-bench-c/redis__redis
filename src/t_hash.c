@@ -955,14 +955,16 @@ int hashTypeSet(redisDb *db, robj *o, sds field, sds value, int flags) {
             de = dictAddNonExistingRaw(ht, newField, &hash);
             dictUseStoredKeyApi(ht, 0);
         } else {
-            de = existing;
             /* If attached TTL to the old field, then remove it from hash's
              * private ebuckets when HASH_SET_KEEP_TTL is not set. */
             if (!(flags & HASH_SET_KEEP_TTL)) {
                 hfield oldField = dictGetKey(existing);
                 hfieldPersist(o, oldField);
-                update = 1;
             }
+            /* Free the old value */
+            sdsfree(dictGetVal(existing));
+            update = 1;
+            de = existing;
         }
 
         if (flags & HASH_SET_TAKE_VALUE) {
