@@ -945,13 +945,14 @@ int hashTypeSet(redisDb *db, robj *o, sds field, sds value, int flags) {
     } else if (o->encoding == OBJ_ENCODING_HT) {
         dict *ht = o->ptr;
         dictEntry *de, *existing;
+        const uint64_t hash = dictGetHash(ht,field);
         /* check if field already exists */
-        existing = dictFind(ht, field);
+        existing = dictFindWithHash(ht, field, hash);
         /* check if field already exists */
         if (existing == NULL) {
             hfield newField = hfieldNew(field, sdslen(field), 0);
             dictUseStoredKeyApi(ht, 1);
-            de = dictAddNonExistingRaw(ht, newField);
+            de = dictAddNonExistingRaw(ht, newField, hash);
             dictUseStoredKeyApi(ht, 0);
         } else {
             de = existing;

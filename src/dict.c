@@ -68,7 +68,7 @@ static dictEntry *dictGetNext(const dictEntry *de);
 static dictEntry **dictGetNextRef(dictEntry *de);
 static void dictSetNext(dictEntry *de, dictEntry *next);
 static int dictDefaultCompare(dict *d, const void *key1, const void *key2);
-static void *dictFindInsertForNonExistingKey(dict *d, const void *key);
+static void *dictFindInsertForNonExistingKey(dict *d, const uint64_t hash);
 
 /* -------------------------- misc inline functions -------------------------------- */
 
@@ -523,10 +523,10 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  *   which should not happen under correct usage.
  * Note:
  * Ensure that the key's uniqueness is managed externally before calling this function. */
-dictEntry *dictAddNonExistingRaw(dict *d, void *key)
+dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t hash)
 {
     /* Get the position for the new key, it should never be NULL. */
-    void *position = dictFindInsertForNonExistingKey(d, key);
+    void *position = dictFindInsertForNonExistingKey(d, hash);
     assert(position!=NULL);
 
     /* Dup the key if necessary. */
@@ -760,14 +760,19 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
-dictEntry *dictFind(dict *d, const void *key)
-{
+static inline dictEntry *_dictFindWithHash(dict *d, const void *key, uint64_t *hash) {
     dictEntry *he;
     uint64_t h, idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
 
-    h = dictHashKey(d, key, d->useStoredKeyApi);
+    /* Calculate the hash only if it's not provided */
+    if (hash == NULL) {
+        h = dictHashKey(d, key, d->useStoredKeyApi);
+    } else {
+        h = *hash;
+    }
+
     idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
@@ -805,6 +810,16 @@ dictEntry *dictFind(dict *d, const void *key)
         if (unlikely(!dictIsRehashing(d))) return NULL;
     }
     return NULL;
+}
+
+dictEntry *dictFind(dict *d, const void *key)
+{
+    return _dictFindWithHash(d,key,NULL);
+}
+
+dictEntry *dictFindWithHash(dict *d, const void *key, uint64_t hash)
+{
+    return _dictFindWithHash(d,key,&hash);
 }
 
 void *dictFetchValue(dict *d, const void *key) {
@@ -1660,9 +1675,8 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
  * Returns:
  *   - Pointer to the bucket where the new key should be inserted.
  *     The bucket is guaranteed to be in the appropriate hash table based on the rehashing state. */
-static void *dictFindInsertForNonExistingKey(dict *d, const void *key) {
+static void *dictFindInsertForNonExistingKey(dict *d, const uint64_t hash) {
     unsigned long idx, table;
-    uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
     idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
 
     if (dictIsRehashing(d)) {
