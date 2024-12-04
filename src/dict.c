@@ -516,6 +516,8 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  * Parameters:
  * - `dict *d`: Pointer to the dictionary structure.
  * - `void *key`: Pointer to the key being added.
+ * - `const uint64_t *hash`: Optional hash of the key being added. If not NULL will avoid
+ *  recalculating it.
  * Guarantees:
  * - The key is assumed to be non-existing, and its corresponding bucket is found
  *   using `dictFindInsertForNonExistingKey`.
@@ -523,10 +525,17 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  *   which should not happen under correct usage.
  * Note:
  * Ensure that the key's uniqueness is managed externally before calling this function. */
-dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t hash)
+dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t *hash)
 {
+    uint64_t h;
+    /* Calculate the hash only if it's not provided */
+    if (hash == NULL) {
+        h = dictHashKey(d, key, d->useStoredKeyApi);
+    } else {
+        h = *hash;
+    }
     /* Get the position for the new key, it should never be NULL. */
-    void *position = dictFindInsertForNonExistingKey(d, hash);
+    void *position = dictFindInsertForNonExistingKey(d, h);
     assert(position!=NULL);
 
     /* Dup the key if necessary. */
@@ -1670,7 +1679,7 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
  *
  * Parameters:
  *   - dict *d: Pointer to the dictionary.
- *   - const void *key: The key for which an insertion position is being determined.
+ *   - const uint64_t hash: The hash of the key being inserted.
  *
  * Returns:
  *   - Pointer to the bucket where the new key should be inserted.
@@ -2133,7 +2142,7 @@ int dictTest(int argc, char **argv, int flags) {
 
     start_benchmark();
     for (j = 0; j < count; j++) {
-        de = dictAddNonExistingRaw(dict,stringFromLongLong(j));
+        de = dictAddNonExistingRaw(dict,stringFromLongLong(j),NULL);
         assert(de != NULL);
     }
     end_benchmark("Inserting via dictAddNonExistingRaw() non existing");

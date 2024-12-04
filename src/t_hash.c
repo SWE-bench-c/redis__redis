@@ -952,7 +952,7 @@ int hashTypeSet(redisDb *db, robj *o, sds field, sds value, int flags) {
         if (existing == NULL) {
             hfield newField = hfieldNew(field, sdslen(field), 0);
             dictUseStoredKeyApi(ht, 1);
-            de = dictAddNonExistingRaw(ht, newField, hash);
+            de = dictAddNonExistingRaw(ht, newField, &hash);
             dictUseStoredKeyApi(ht, 0);
         } else {
             de = existing;
