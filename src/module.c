@@ -5395,6 +5395,10 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
     if (key->mode & REDISMODULE_OPEN_KEY_ACCESS_EXPIRED)
         hfeFlags = HFE_LAZY_ACCESS_EXPIRED; /* allow read also expired fields */
 
+    /* Verify flag HASH_EXISTS is not set together with HASH_EXPIRE_TIME */
+    if ((flags & REDISMODULE_HASH_EXISTS) && (flags & REDISMODULE_HASH_EXPIRE_TIME))    
+        return REDISMODULE_ERR;        
+
     va_start(ap, flags);
     while(1) {
         RedisModuleString *field, **valueptr;
@@ -5411,18 +5415,13 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
 
         /* Query the hash for existence or value object. */
         if (flags & REDISMODULE_HASH_EXISTS) {
-            
-            /* Verify flag is not set together with REDISMODULE_HASH_EXPIRE_TIME */
-            if (flags & REDISMODULE_HASH_EXPIRE_TIME)
-                return REDISMODULE_ERR;
-            
             existsptr = va_arg(ap,int*);
             if (key->value) {
                 *existsptr = hashTypeExists(key->db, key->value, field->ptr, hfeFlags, NULL);
             } else {
                 *existsptr = 0;
             }
-        } if (flags & REDISMODULE_HASH_EXPIRE_TIME) {
+        } else if (flags & REDISMODULE_HASH_EXPIRE_TIME) {
             mstime_t *expireptr = va_arg(ap,mstime_t*);            
             *expireptr = REDISMODULE_NO_EXPIRE;
             if (key->value) {
