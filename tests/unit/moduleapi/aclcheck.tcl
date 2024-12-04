@@ -59,7 +59,7 @@ start_server {tags {"modules acl"}} {
         assert_equal [r aclcheck.set.check.prefixkey "W" "" ORDER_2024_564879 5] OK
         assert_equal [r aclcheck.set.check.prefixkey "R" "" PRODUCT_BOOKS_753376 5] OK
         
-        # The empty string perfix should not match if cannot access all keys 
+        # The empty string prefix should not match if cannot access all keys 
         r acl setuser default +set resetkeys %R~x* %W~x* ~x*        
         catch {r aclcheck.set.check.prefixkey "~" "" CART_BOOKS_12 5} e
         assert_match "*DENIED KEY*" $e
