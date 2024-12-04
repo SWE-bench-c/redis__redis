@@ -127,7 +127,16 @@ int test_open_key_hget_expire(RedisModuleCtx *ctx, RedisModuleString **argv, int
     if (!key) return REDISMODULE_OK;
 
     mstime_t expireAt;
-    RedisModule_HashGet(key,REDISMODULE_HASH_EXPIRE_TIME,argv[2],&expireAt,NULL);
+    
+    /* Let's test here that we get error if using invalid flags combination */
+    RedisModule_Assert(
+            RedisModule_HashGet(key,
+                                REDISMODULE_HASH_EXISTS |
+                                REDISMODULE_HASH_EXPIRE_TIME,
+                                argv[2], &expireAt, NULL) == REDISMODULE_ERR);    
+    
+    /* Now let's get the expire time */
+    RedisModule_HashGet(key, REDISMODULE_HASH_EXPIRE_TIME,argv[2],&expireAt,NULL);
     RedisModule_ReplyWithLongLong(ctx, expireAt);
     RedisModule_CloseKey(key);
     return REDISMODULE_OK;

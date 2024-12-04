@@ -5411,6 +5411,11 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
 
         /* Query the hash for existence or value object. */
         if (flags & REDISMODULE_HASH_EXISTS) {
+            
+            /* Verify flag is not set together with REDISMODULE_HASH_EXPIRE_TIME */
+            if (flags & REDISMODULE_HASH_EXPIRE_TIME)
+                return REDISMODULE_ERR;
+            
             existsptr = va_arg(ap,int*);
             if (key->value) {
                 *existsptr = hashTypeExists(key->db, key->value, field->ptr, hfeFlags, NULL);
@@ -5463,7 +5468,7 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
  *     is not a hash.
  */
 mstime_t RM_HashFieldMinExpire(RedisModuleKey *key) {
-    if ( (!key->value) || (key->value->type != OBJ_HASH))
+    if ((!key->value) || (key->value->type != OBJ_HASH))
         return REDISMODULE_NO_EXPIRE;
     
     mstime_t min = hashTypeGetMinExpire(key->value, 1);
