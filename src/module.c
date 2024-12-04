@@ -5361,7 +5361,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
  * 
  * REDISMODULE_HASH_EXPIRE_TIME: retrieves the expiration time of a field in the hash.
  * The function expects a `mstime_t` pointer as the second element of each pair.
- * If the field does not exist or has no expiration, the valueis set to 
+ * If the field does not exist or has no expiration, the value is set to 
  * `REDISMODULE_NO_EXPIRE`. This flag must not be used with `REDISMODULE_HASH_EXISTS`.
  * 
  * Example of REDISMODULE_HASH_CFIELDS:
