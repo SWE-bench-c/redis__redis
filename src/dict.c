@@ -2168,7 +2168,7 @@ int dictTest(int argc, char **argv, int flags) {
         dictEntry *de = dictAddRaw(dict, key, NULL);
         assert(de != NULL);
     }
-    end_benchmark("Find() and inserting via dictAddRaw() non existing");
+    end_benchmark("Find() and inserting via dictFind()+dictAddRaw() non existing");
 
     dictEmpty(dict, NULL);
 
@@ -2184,7 +2184,7 @@ int dictTest(int argc, char **argv, int flags) {
         de = dictAddNonExistingRaw(dict, key, &hash);
         assert(de != NULL);
     }
-    end_benchmark("Find() and inserting via dictAddNonExistingRaw() non existing");
+    end_benchmark("Find() and inserting via dictGetHash()+dictFindWithHash()+dictAddNonExistingRaw() non existing");
     assert((long)dictSize(dict) == count);
 
     /* Wait for rehashing. */
