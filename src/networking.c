@@ -399,18 +399,18 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
     /* We update the buffer peak always */
     const size_t available = c->buf_usable_size - c->bufpos;
 
-    /* If there already are entries in the reply list or the added length surpasses the buffer,
-     * we cannot add anything more to the static buffer. */
-    const int out_buffer_boundary = len > available;
-    if (listLength(c->reply) > 0 || out_buffer_boundary)
-        _addReplyProtoToList(c,c->reply,s,len);
-    else {
-        /* Add reply to the static buffer in the client struct. */
-        memcpy(c->buf+c->bufpos,s,len);
-        c->bufpos+=len;
+    size_t reply_len = 0;
+    /* If there already are entries in the reply list, we cannot
+     * add anything more to the static buffer. */
+    if (listLength(c->reply) < 1) {
+        reply_len = len > available ? available : len;
+        memcpy(c->buf+c->bufpos,s,reply_len);
+        c->bufpos+=reply_len;
         /* We update the buffer peak after appending the reply to the buffer */
         c->buf_peak = max(c->buf_peak,(size_t)c->bufpos);
     }
+
+    if (len > reply_len) _addReplyProtoToList(c,c->reply,s+reply_len,len-reply_len);
 }
 
 /* -----------------------------------------------------------------------------
