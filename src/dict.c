@@ -62,13 +62,13 @@ typedef struct {
 
 static void _dictExpandIfNeeded(dict *d);
 static void _dictShrinkIfNeeded(dict *d);
+static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx);
 static signed char _dictNextExp(unsigned long size);
 static int _dictInit(dict *d, dictType *type);
 static dictEntry *dictGetNext(const dictEntry *de);
 static dictEntry **dictGetNextRef(dictEntry *de);
 static void dictSetNext(dictEntry *de, dictEntry *next);
 static int dictDefaultCompare(dict *d, const void *key1, const void *key2);
-static void *dictFindInsertForNonExistingKey(dict *d, const uint64_t hash);
 
 /* -------------------------- misc inline functions -------------------------------- */
 
@@ -516,18 +516,25 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  * Parameters:
  * - `dict *d`: Pointer to the dictionary structure.
  * - `void *key`: Pointer to the key being added.
- * - `const uint64_t *hash`: Optional hash of the key being added. If not NULL will avoid
- *  recalculating it.
+ * - `const uint64_t hash`: hash of the key being added.
  * Guarantees:
- * - The key is assumed to be non-existing, and its corresponding bucket is found
- *   using `dictFindInsertForNonExistingKey`.
- * - The function will assert if `dictFindInsertForNonExistingKey` returns NULL,
- *   which should not happen under correct usage.
+ * - The key is assumed to be non-existing.
  * Note:
  * Ensure that the key's uniqueness is managed externally before calling this function. */
 dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t hash) {
     /* Get the position for the new key, it should never be NULL. */
-    void *position = dictFindInsertForNonExistingKey(d, hash);
+    unsigned long idx, table;
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
+
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
+
+    /* Expand the hash table if needed */
+    _dictExpandIfNeeded(d);
+
+    table = dictIsRehashing(d) ? 1 : 0;
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+    void *position = &d->ht_table[table][idx];
     assert(position!=NULL);
 
     /* Dup the key if necessary. */
@@ -635,17 +642,8 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     h = dictHashKey(d, key, d->useStoredKeyApi);
     idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
 
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* If we have a valid hash entry at `idx` in ht0, we perform
-             * rehash on the bucket at `idx` (being more CPU cache friendly) */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* If the hash entry is not in ht0, we rehash the buckets based
-             * on the rehashidx (not CPU cache friendly). */
-            _dictRehashStep(d);
-        }
-    }
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
 
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
@@ -761,9 +759,9 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
-static inline dictEntry *_dictFindWithHash(dict *d, const void *key, uint64_t *hash) {
+static inline dictEntry *_dictFindByHash(dict *d, const void *key, uint64_t *hash) {
     dictEntry *he;
-    uint64_t h, idx, table;
+    uint64_t idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
 
@@ -773,17 +771,8 @@ static inline dictEntry *_dictFindWithHash(dict *d, const void *key, uint64_t *h
     idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* If we have a valid hash entry at `idx` in ht0, we perform
-             * rehash on the bucket at `idx` (being more CPU cache friendly) */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* If the hash entry is not in ht0, we rehash the buckets based
-             * on the rehashidx (not CPU cache friendly). */
-            _dictRehashStep(d);
-        }
-    }
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
 
     for (table = 0; table <= 1; table++) {
         if (table == 0 && (long)idx < d->rehashidx) continue;
@@ -811,12 +800,12 @@ static inline dictEntry *_dictFindWithHash(dict *d, const void *key, uint64_t *h
 
 dictEntry *dictFind(dict *d, const void *key)
 {
-    return _dictFindWithHash(d,key,NULL);
+    return _dictFindByHash(d,key,NULL);
 }
 
 dictEntry *dictFindWithHash(dict *d, const void *key, uint64_t hash)
 {
-    return _dictFindWithHash(d,key,&hash);
+    return _dictFindByHash(d,key,&hash);
 }
 
 void *dictFetchValue(dict *d, const void *key) {
@@ -1604,6 +1593,21 @@ static void _dictShrinkIfNeeded(dict *d)
     dictShrinkIfNeeded(d);
 }
 
+static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx) {
+    if ((!dictIsRehashing(d)) || (d->pauserehash != 0))
+        return;
+    /* rehashing not in progress if rehashidx == -1 */
+    if ((long)visitedIdx >= d->rehashidx && d->ht_table[0][visitedIdx]) {
+        /* If we have a valid hash entry at `idx` in ht0, we perform
+         * rehash on the bucket at `idx` (being more CPU cache friendly) */
+        _dictBucketRehash(d, visitedIdx);
+    } else {
+        /* If the hash entry is not in ht0, we rehash the buckets based
+         * on the rehashidx (not CPU cache friendly). */
+        dictRehash(d,1);
+    }
+}
+
 /* Our hash table capability is a power of two */
 static signed char _dictNextExp(unsigned long size)
 {
@@ -1624,17 +1628,8 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
     if (existing) *existing = NULL;
     idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
 
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* If we have a valid hash entry at `idx` in ht0, we perform
-             * rehash on the bucket at `idx` (being more CPU cache friendly) */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* If the hash entry is not in ht0, we rehash the buckets based
-             * on the rehashidx (not CPU cache friendly). */
-            _dictRehashStep(d);
-        }
-    }
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
 
     /* Expand the hash table if needed */
     _dictExpandIfNeeded(d);
@@ -1662,38 +1657,6 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
     return bucket;
 }
 
-/* Finds the bucket in the dictionary where a non-existing key should be inserted.
- * Assumes that the key does not already exist in the dictionary.
- *
- * Parameters:
- *   - dict *d: Pointer to the dictionary.
- *   - const uint64_t hash: The hash of the key being inserted.
- *
- * Returns:
- *   - Pointer to the bucket where the new key should be inserted.
- *     The bucket is guaranteed to be in the appropriate hash table based on the rehashing state. */
-static void *dictFindInsertForNonExistingKey(dict *d, const uint64_t hash) {
-    unsigned long idx, table;
-    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
-
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* Rehash the bucket at idx if applicable */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* Perform a single-step rehash */
-            _dictRehashStep(d);
-        }
-    }
-
-    /* Expand the hash table if needed */
-    _dictExpandIfNeeded(d);
-
-    /* Always return the bucket in the correct table */
-    table = dictIsRehashing(d) ? 1 : 0;
-    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
-    return &d->ht_table[table][idx];
-}
 
 void dictEmpty(dict *d, void(callback)(dict*)) {
     /* Someone may be monitoring a dict that started rehashing, before
@@ -2134,7 +2097,9 @@ int dictTest(int argc, char **argv, int flags) {
 
     start_benchmark();
     for (j = 0; j < count; j++) {
-        de = dictAddNonExistingRaw(dict,stringFromLongLong(j),NULL);
+        void *key = stringFromLongLong(j);
+        const uint64_t hash = dictGetHash(dict, key);
+        de = dictAddNonExistingRaw(dict,key,hash);
         assert(de != NULL);
     }
     end_benchmark("Inserting via dictAddNonExistingRaw() non existing");
@@ -2173,7 +2138,7 @@ int dictTest(int argc, char **argv, int flags) {
          /* Check if the key exists */
         dictEntry *entry = dictFindWithHash(dict, key, hash);
         assert(entry == NULL);
-        de = dictAddNonExistingRaw(dict, key, &hash);
+        de = dictAddNonExistingRaw(dict, key, hash);
         assert(de != NULL);
     }
     end_benchmark("Find() and inserting via dictGetHash()+dictFindWithHash()+dictAddNonExistingRaw() non existing");
