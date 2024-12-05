@@ -521,7 +521,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  * - The key is assumed to be non-existing.
  * Note:
  * Ensure that the key's uniqueness is managed externally before calling this function. */
-dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t hash) {
+dictEntry *dictAddNonExistsByHash(dict *d, void *key, const uint64_t hash) {
     /* Get the position for the new key, it should never be NULL. */
     unsigned long idx, table;
     idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
@@ -803,7 +803,7 @@ dictEntry *dictFind(dict *d, const void *key)
     return _dictFindByHash(d,key,NULL);
 }
 
-dictEntry *dictFindWithHash(dict *d, const void *key, uint64_t hash)
+dictEntry *dictFindByHash(dict *d, const void *key, uint64_t hash)
 {
     return _dictFindByHash(d,key,&hash);
 }
@@ -2104,10 +2104,10 @@ int dictTest(int argc, char **argv, int flags) {
     for (j = 0; j < count; j++) {
         void *key = stringFromLongLong(j);
         const uint64_t hash = dictGetHash(dict, key);
-        de = dictAddNonExistingRaw(dict,key,hash);
+        de = dictAddNonExistsByHash(dict,key,hash);
         assert(de != NULL);
     }
-    end_benchmark("Inserting via dictAddNonExistingRaw() non existing");
+    end_benchmark("Inserting via dictAddNonExistsByHash() non existing");
     assert((long)dictSize(dict) == count);
 
     /* Wait for rehashing. */
@@ -2141,12 +2141,12 @@ int dictTest(int argc, char **argv, int flags) {
         uint64_t hash = dictGetHash(dict, key);
 
          /* Check if the key exists */
-        dictEntry *entry = dictFindWithHash(dict, key, hash);
+        dictEntry *entry = dictFindByHash(dict, key, hash);
         assert(entry == NULL);
-        de = dictAddNonExistingRaw(dict, key, hash);
+        de = dictAddNonExistsByHash(dict, key, hash);
         assert(de != NULL);
     }
-    end_benchmark("Find() and inserting via dictGetHash()+dictFindWithHash()+dictAddNonExistingRaw() non existing");
+    end_benchmark("Find() and inserting via dictGetHash()+dictFindByHash()+dictAddNonExistsByHash() non existing");
     assert((long)dictSize(dict) == count);
 
     /* Wait for rehashing. */

@@ -947,12 +947,12 @@ int hashTypeSet(redisDb *db, robj *o, sds field, sds value, int flags) {
         dictEntry *de, *existing;
         const uint64_t hash = dictGetHash(ht,field);
         /* check if field already exists */
-        existing = dictFindWithHash(ht, field, hash);
+        existing = dictFindByHash(ht, field, hash);
         /* check if field already exists */
         if (existing == NULL) {
             hfield newField = hfieldNew(field, sdslen(field), 0);
             dictUseStoredKeyApi(ht, 1);
-            de = dictAddNonExistingRaw(ht, newField, hash);
+            de = dictAddNonExistsByHash(ht, newField, hash);
             dictUseStoredKeyApi(ht, 0);
         } else {
             /* If attached TTL to the old field, then remove it from hash's
