@@ -22,13 +22,10 @@ static eventNotifier* mainThreadPendingClientsNotifiers[IO_THREADS_MAX_NUM] __at
 /* When IO threads read a complete query of clients or want to free clients,
  * it should remove it from its clients list and put the client in the list
  * for main thread, we will send these clients to main thread in beforeSleep. */
-void putInPendingClienstForMainThread(client *c, int uninstall_handler) {
-    /* If the IO thread may no longer manage it, such as closing client, we can
-     * uninstall event handler, so main thread doesn't need to do it costly. */
-    if (uninstall_handler) {
-        connSetReadHandler(c->conn, NULL);
-        connSetWriteHandler(c->conn, NULL);
-    }
+void putInPendingClienstForMainThread(client *c, int unbind) {
+    /* If the IO thread may no longer manage it, such as closing client, we should
+     * unbind client from event loop, so main thread doesn't need to do it costly. */
+    if (unbind) connUnbindEventLoop(c->conn);
     /* Just skip if it already is transferred. */
     if (c->io_thread_client_list_node) {
         listDelNode(IOThreads[c->tid].clients, c->io_thread_client_list_node);
@@ -39,16 +36,15 @@ void putInPendingClienstForMainThread(client *c, int uninstall_handler) {
     }
 }
 
-/* Uninstall read and write handler of a client from io thread event loop,
- * to make sure that we can operate the client safely. */
-void uninstallHandlerFromIOThreadEventLoop(client *c) {
+/* Unbind connection of client from io thread event loop, write and read handlers
+ * also be removed, ensures that we can operate the client safely. */
+void unbindClientFromIOThreadEventLoop(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
                  c->running_tid == IOTHREAD_MAIN_THREAD_ID);
     if (!connHasReadHandler(c->conn) && !connHasWriteHandler(c->conn)) return;
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
-    connSetReadHandler(c->conn, NULL);
-    connSetWriteHandler(c->conn, NULL);
+    connUnbindEventLoop(c->conn);
     resumeIOThread(c->tid);
 }
 
@@ -60,8 +56,8 @@ void keepClientInMainThread(client *c) {
                  c->running_tid == IOTHREAD_MAIN_THREAD_ID);
     /* IO thread no longer manage it. */
     server.io_threads_clients_num[c->tid]--;
-    /* Remove the client from io thread event loop. */
-    uninstallHandlerFromIOThreadEventLoop(c);
+    /* Unbind connection of client from io thread event loop. */
+    unbindClientFromIOThreadEventLoop(c);
     /* Let main thread to run it, rebind event loop and read handler */
     connRebindEventLoop(c->conn, server.el);
     connSetReadHandler(c->conn, readQueryFromClient);
@@ -100,9 +96,8 @@ void fetchClientFromIOThread(client *c) {
             }
         }
     }
-    /* Remove event handler from io thread event loop. */
-    connSetReadHandler(c->conn, NULL);
-    connSetWriteHandler(c->conn, NULL);
+    /* Unbind connection of client from io thread event loop. */
+    connUnbindEventLoop(c->conn);
     /* Now main thread can process it. */
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
     resumeIOThread(c->tid);
@@ -129,6 +124,7 @@ int isClientMustHandledByMainThread(client *c) {
 /* When the main thread accepts a new client or transfers clients to IO threads,
  * it assign the client to the IO thread with the fewest clients. */
 void assignClientToIOThread(client *c) {
+    serverAssert(c->tid == IOTHREAD_MAIN_THREAD_ID);
     /* Find the IO thread with the fewest clients. */
     int min_id = 0;
     int min = INT_MAX;
@@ -145,10 +141,10 @@ void assignClientToIOThread(client *c) {
     c->running_tid = min_id;
     server.io_threads_clients_num[min_id]++;
 
-    /* Uninstall read and write handler, disable read and write, and then put in
-     * the list, main thread will send these clients to IO thread in beforeSleep. */
-    connSetReadHandler(c->conn, NULL);
-    connSetWriteHandler(c->conn, NULL);
+    /* Unbind connection of client from main thread event loop, disable read and
+     * write, and then put it in the list, main thread will send these clients
+     * to IO thread in beforeSleep. */
+    connUnbindEventLoop(c->conn);
     c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
     listAddNodeTail(pendingClientsForIOThreads[c->tid], c);
 }
@@ -495,7 +491,13 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
 }
 
 void IOThreadBeforeSleep(struct aeEventLoop *el) {
-    IOThread *t = el->privdata;
+    IOThread *t = el->privdata[0];
+
+    /* Handle pending data(typical TLS). */
+    connTypeProcessPendingData(el);
+
+    /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
+    aeSetDontWait(el, connTypeHasPendingData(el));
 
     /* Check if i am pausing */
     int paused;
@@ -553,7 +555,7 @@ void initThreadedIO(void) {
         IOThread *t = &IOThreads[i];
         t->id = i;
         t->el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
-        t->el->privdata = t;
+        t->el->privdata[0] = t;
         t->pending_clients = listCreate();
         t->processing_clients = listCreate();
         t->pending_clients_for_main_thread = listCreate();
@@ -564,6 +566,7 @@ void initThreadedIO(void) {
         pthread_mutexattr_t *attr = NULL;
         #if defined(__linux__) && defined(__GLIBC__)
         attr = zmalloc(sizeof(pthread_mutexattr_t));
+        pthread_mutexattr_init(attr);
         pthread_mutexattr_settype(attr, PTHREAD_MUTEX_ADAPTIVE_NP);
         #endif
         pthread_mutex_init(&t->pending_clients_mutex, attr);

@@ -1648,7 +1648,7 @@ void freeClient(client *c) {
     /* We need to uninstall event handler first if the client has binded event
      * handler in io thread event loop. */
     if (c->tid != IOTHREAD_MAIN_THREAD_ID) {
-        uninstallHandlerFromIOThreadEventLoop(c);
+        unbindClientFromIOThreadEventLoop(c);
     }
 
     /* Update the number of clients in the IO thread. */
