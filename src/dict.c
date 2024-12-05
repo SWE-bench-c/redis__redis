@@ -1865,10 +1865,29 @@ char *stringFromLongLong(long long value) {
     return s;
 }
 
-char *stringFromSubstring(const char *largeString, size_t startIndex, size_t length) {
-    char *s = zmalloc(length + 1); // Allocate memory for the substring (+1 for null terminator)
-    memcpy(s, largeString + startIndex, length); // Copy the substring
-    s[length] = '\0'; // Null-terminate the string
+char *stringFromSubstring(void) {
+    #define LARGE_STRING_SIZE 10000
+    #define MIN_STRING_SIZE 100
+    #define MAX_STRING_SIZE 500
+    static char largeString[LARGE_STRING_SIZE + 1];
+    static int init = 0;
+    if (init == 0) {
+        /* Generate a large string */
+        for (size_t i = 0; i < LARGE_STRING_SIZE; i++) {
+            /* Random printable ASCII character (33 to 126) */
+            largeString[i] = 33 + (rand() % 94);
+        }
+        /* Null-terminate the large string */
+        largeString[LARGE_STRING_SIZE] = '\0';
+        init = 1;
+    }
+    /* Randomly choose a size between minSize and maxSize */
+    size_t substringSize = MIN_STRING_SIZE + (rand() % (MAX_STRING_SIZE - MIN_STRING_SIZE + 1));
+    size_t startIndex = rand() % (LARGE_STRING_SIZE - substringSize + 1);
+    /* Allocate memory for the substring (+1 for null terminator) */
+    char *s = zmalloc(substringSize + 1);
+    memcpy(s, largeString + startIndex, substringSize); // Copy the substring
+    s[substringSize] = '\0'; // Null-terminate the string
     return s;
 }
 
@@ -2036,29 +2055,15 @@ int dictTest(int argc, char **argv, int flags) {
         dictSetResizeEnabled(DICT_RESIZE_ENABLE);
     }
     srand(12345);
-    #define LARGE_STRING_SIZE 10000
-    #define MIN_STRING_SIZE 100
-    #define MAX_STRING_SIZE 500
-    // Generate a large string
-    char largeString[LARGE_STRING_SIZE + 1];
-    for (size_t i = 0; i < LARGE_STRING_SIZE; i++) {
-        largeString[i] = 33 + (rand() % 94); // Random printable ASCII character (33 to 126)
-    }
-    largeString[LARGE_STRING_SIZE] = '\0'; // Null-terminate the large string
-
     start_benchmark();
     for (j = 0; j < count; j++) {
-        // Randomly choose a size between MIN_STRING_SIZE and MAX_STRING_SIZE
-        size_t substringSize = MIN_STRING_SIZE + (rand() % (MAX_STRING_SIZE - MIN_STRING_SIZE + 1));
-        size_t startIndex = rand() % (LARGE_STRING_SIZE - substringSize + 1);
+        /* Create a dynamically allocated substring */
+        char *key = stringFromSubstring();
 
-        // Create a dynamically allocated substring
-        char *key = stringFromSubstring(largeString, startIndex, substringSize);
-
-        // Insert the range directly from the large string
+        /* Insert the range directly from the large string */
         de = dictAddRaw(dict, key, &existing);
         assert(de != NULL || existing != NULL);
-        // If key already exists NULL is returned so we need to free the temp key string
+        /* If key already exists NULL is returned so we need to free the temp key string */
         if (de == NULL) zfree(key);
     }
     end_benchmark("Inserting random substrings (100-500B) from large string with symbols");
