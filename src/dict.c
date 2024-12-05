@@ -525,17 +525,9 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  *   which should not happen under correct usage.
  * Note:
  * Ensure that the key's uniqueness is managed externally before calling this function. */
-dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t *hash)
-{
-    uint64_t h;
-    /* Calculate the hash only if it's not provided */
-    if (hash == NULL) {
-        h = dictHashKey(d, key, d->useStoredKeyApi);
-    } else {
-        h = *hash;
-    }
+dictEntry *dictAddNonExistingRaw(dict *d, void *key, const uint64_t hash) {
     /* Get the position for the new key, it should never be NULL. */
-    void *position = dictFindInsertForNonExistingKey(d, h);
+    void *position = dictFindInsertForNonExistingKey(d, hash);
     assert(position!=NULL);
 
     /* Dup the key if necessary. */
@@ -776,11 +768,7 @@ static inline dictEntry *_dictFindWithHash(dict *d, const void *key, uint64_t *h
     if (dictSize(d) == 0) return NULL; /* dict is empty */
 
     /* Calculate the hash only if it's not provided */
-    if (hash == NULL) {
-        h = dictHashKey(d, key, d->useStoredKeyApi);
-    } else {
-        h = *hash;
-    }
+    uint64_t h = (hash == NULL) ? dictHashKey(d, key, d->useStoredKeyApi) : *hash;
 
     idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
