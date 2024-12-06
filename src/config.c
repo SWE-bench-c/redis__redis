@@ -430,6 +430,7 @@ void loadServerConfigFromString(char *config) {
         {"list-max-ziplist-entries", 2, 2},
         {"list-max-ziplist-value", 2, 2},
         {"lua-replicate-commands", 2, 2},
+        {"io-threads-do-reads", 2, 2},
         {NULL, 0},
     };
     char buf[1024];
@@ -2479,8 +2480,6 @@ static int updateReplBacklogSize(const char **err) {
 
 static int updateMaxmemory(const char **err) {
     UNUSED(err);
-
-    pauseAllIOThreads();
     if (server.maxmemory) {
         size_t used = zmalloc_used_memory()-freeMemoryGetNotCountedMemory();
         if (server.maxmemory < used) {
@@ -2488,7 +2487,6 @@ static int updateMaxmemory(const char **err) {
         }
         startEvictionTimeProc();
     }
-    resumeAllIOThreads();
     return 1;
 }
 
@@ -2553,7 +2551,7 @@ static int updateMaxclients(const char **err) {
     size_t newsize = server.maxclients + CONFIG_FDSET_INCR;
     if ((unsigned int) aeGetSetSize(server.el) < newsize) {
         if (aeResizeSetSize(server.el, newsize) == AE_ERR ||
-            resizeIOThreadsEventLoop(newsize) == AE_ERR)
+            resizeAllIOThreadsEventLoops(newsize) == AE_ERR)
         {
             *err = "The event loop API used by Redis is not able to handle the specified number of clients";
             return 0;

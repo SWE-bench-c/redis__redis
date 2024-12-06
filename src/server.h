@@ -1195,8 +1195,8 @@ typedef struct client {
     uint64_t id;            /* Client incremental unique ID. */
     uint64_t flags;         /* Client flags: CLIENT_* macros. */
     connection *conn;
-    uint8_t tid;            /* Thread ID this client is bound to. */
-    uint8_t running_tid;    /* Thread ID this client is running on. */
+    uint8_t tid;            /* Thread assigned ID this client is bound to. */
+    uint8_t running_tid;    /* Thread assigned ID this client is running on. */
     uint8_t io_flags;       /* Accessed by both main and IO threads, but not modified concurrently */
     uint8_t read_error;     /* Client read error: CLIENT_READ_* macros. */
     int resp;               /* RESP protocol version. Can be 2 or 3. */
@@ -1323,14 +1323,14 @@ typedef struct client {
 typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) {
     uint8_t id;                                 /* The unique ID assigned, if IO_THREADS_MAX_NUM is more
                                                  * than 256, we should also promote the data type. */
-    pthread_t tid;                              /* Thread ID */
+    pthread_t tid;                              /* Pthread ID */
     redisAtomic int paused;                     /* Paused status for the io thread. */
     aeEventLoop *el;                            /* Main event loop of io thread. */
     list *pending_clients;                      /* List of clients with pending writes. */
     list *processing_clients;                   /* List of clients being processed. */
     eventNotifier *pending_clients_notifier;    /* Used to wake up the loop when write should be performed. */
     pthread_mutex_t pending_clients_mutex;      /* Mutex for pending write list */
-    list *pending_clients_for_main_thread;      /* Clients that are waiting to be executed by the main thread. */
+    list *pending_clients_to_main_thread;       /* Clients that are waiting to be executed by the main thread. */
     list *clients;                              /* IO thread managed clients. */
 } IOThread;
 
@@ -2753,9 +2753,9 @@ void pauseAllIOThreads(void);
 void resumeAllIOThreads(void);
 void pauseIOThreadsRange(int start, int end);
 void resumeIOThreadsRange(int start, int end);
-int resizeIOThreadsEventLoop(size_t newsize);
+int resizeAllIOThreadsEventLoops(size_t newsize);
 int sendPendingClientsToIOThreads(void);
-void putInPendingClienstForMainThread(client *c, int unbind);
+void enqueuePendingClientsToMainThread(client *c, int unbind);
 void putInPendingClienstForIOThreads(client *c);
 void handleClientReadError(client *c);
 void unbindClientFromIOThreadEventLoop(client *c);

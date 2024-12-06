@@ -133,6 +133,7 @@ client *createClient(connection *conn) {
     c->id = client_id;
     c->tid = IOTHREAD_MAIN_THREAD_ID;
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
+    if (conn) server.io_threads_clients_num[c->tid]++;
 #ifdef LOG_REQ_RES
     reqresReset(c, 0);
     c->resp = server.client_default_resp;
@@ -165,6 +166,7 @@ client *createClient(connection *conn) {
     c->sentlen = 0;
     c->flags = 0;
     c->io_flags = CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED;
+    c->read_error = 0;
     c->slot = -1;
     c->ctime = c->lastinteraction = server.unixtime;
     c->duration = 0;
@@ -211,7 +213,6 @@ client *createClient(connection *conn) {
     listInitNode(&c->clients_pending_write_node, c);
     c->mem_usage_bucket = NULL;
     c->mem_usage_bucket_node = NULL;
-    c->read_error = 0;
     if (conn) linkClient(c);
     initClientMultiState(c);
     return c;
@@ -1350,7 +1351,6 @@ void clientAcceptHandler(connection *conn) {
     moduleFireServerEvent(REDISMODULE_EVENT_CLIENT_CHANGE,
                           REDISMODULE_SUBEVENT_CLIENT_CHANGE_CONNECTED,
                           c);
-    server.io_threads_clients_num[IOTHREAD_MAIN_THREAD_ID]++;
 
     /* Assign the client to an IO thread */
     if (server.io_threads_num > 1) assignClientToIOThread(c);
@@ -1645,8 +1645,7 @@ void freeClient(client *c) {
         fetchClientFromIOThread(c);
     }
 
-    /* We need to uninstall event handler first if the client has binded event
-     * handler in io thread event loop. */
+    /* We need to unbind connection of client from io thread event loop first. */
     if (c->tid != IOTHREAD_MAIN_THREAD_ID) {
         unbindClientFromIOThreadEventLoop(c);
     }
@@ -1817,7 +1816,7 @@ void freeClientAsync(client *c) {
         if (main_thread) pauseIOThread(c->tid);
         if (!(c->flags & CLIENT_IO_CLOSE_ASAP)) {
             c->io_flags |= CLIENT_IO_CLOSE_ASAP;
-            putInPendingClienstForMainThread(c, 1);
+            enqueuePendingClientsToMainThread(c, 1);
         }
         if (main_thread) resumeIOThread(c->tid);
         return;
@@ -2230,7 +2229,7 @@ void resetClient(client *c) {
  *    path, it is not really released, but only marked for later release. */
 void protectClient(client *c) {
     c->flags |= CLIENT_PROTECTED;
-    if (c->conn && c->io_flags & CLIENT_IO_READ_ENABLED && c->io_flags & CLIENT_IO_WRITE_ENABLED) {
+    if (c->conn && c->tid == IOTHREAD_MAIN_THREAD_ID) {
         connSetReadHandler(c->conn,NULL);
         connSetWriteHandler(c->conn,NULL);
     }
@@ -2241,7 +2240,7 @@ void unprotectClient(client *c) {
     if (c->flags & CLIENT_PROTECTED) {
         c->flags &= ~CLIENT_PROTECTED;
         if (c->conn) {
-            if (c->io_flags & CLIENT_IO_READ_ENABLED && c->io_flags & CLIENT_IO_WRITE_ENABLED)
+            if (c->tid == IOTHREAD_MAIN_THREAD_ID)
                 connSetReadHandler(c->conn,readQueryFromClient);
             if (clientHasPendingReplies(c)) putClientInPendingWriteQueue(c);
         }
@@ -2730,13 +2729,13 @@ int processInputBuffer(client *c) {
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) {
                 if (c->running_tid != IOTHREAD_MAIN_THREAD_ID && c->read_error)
-                    putInPendingClienstForMainThread(c, 0);
+                    enqueuePendingClientsToMainThread(c, 0);
                 break;
             }
         } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
             if (processMultibulkBuffer(c) != C_OK) {
                 if (c->running_tid != IOTHREAD_MAIN_THREAD_ID && c->read_error)
-                    putInPendingClienstForMainThread(c, 0);
+                    enqueuePendingClientsToMainThread(c, 0);
                 break;
             }
         } else {
@@ -2755,7 +2754,7 @@ int processInputBuffer(client *c) {
              * as one that needs to process the command. */
             if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
                 c->io_flags |= CLIENT_IO_PENDING_COMMAND;
-                putInPendingClienstForMainThread(c, 0);
+                enqueuePendingClientsToMainThread(c, 0);
                 break;
             }
 
@@ -3080,7 +3079,7 @@ sds catClientInfoString(sds s, client *client) {
         " resp=%i", client->resp,
         " lib-name=%s", client->lib_name ? (char*)client->lib_name->ptr : "",
         " lib-ver=%s", client->lib_ver ? (char*)client->lib_ver->ptr : "",
-        " io-thread-id=%i", client->tid));
+        " io-thread=%i", client->tid));
 
     if (paused) resumeIOThread(client->running_tid);
     return ret;
@@ -3097,7 +3096,6 @@ sds getAllClientsInfoString(int type) {
      * specific IO thread will not repeatedly execute in catClientInfoString. */
     int allpaused = 0;
     if (server.io_threads_num > 1 && !server.crashing &&
-        (type == CLIENT_TYPE_NORMAL || type == -1) &&
         pthread_equal(server.main_thread_id, pthread_self()))
     {
         allpaused = 1;

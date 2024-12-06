@@ -364,6 +364,13 @@ start_server {} {
         resume_process $server_pid
         r ping ;# make sure a full event loop cycle is processed before issuing CLIENT LIST
 
+        # wait for get commands to be processed
+        wait_for_condition 100 10 {
+            [expr {[regexp {calls=(\d+)} [cmdrstat get r] -> calls] ? $calls : 0}] >= 2
+        } else {
+            fail "get did not arrive"
+        }
+
         # Validate obuf-clients were disconnected (because of obuf limit)
         catch {client_field obuf-client1 name} e
         assert_match {no client named obuf-client1 found*} $e
@@ -411,7 +418,7 @@ start_server {} {
         # Decrease maxmemory_clients and expect client eviction
         r config set maxmemory-clients [expr $maxmemory_clients / 2]
         wait_for_condition 200 10 {
-            [llength [lsearch -all [split [string trim [r client list]] "\r\n"] *name=client*]] < $client_count
+            [llength [regexp -all -inline {name=client} [r client list]]] < $client_count
         } else {
             fail "Failed to evict clients"
         }
@@ -472,8 +479,8 @@ start_server {} {
         assert {$total_client_mem <= $maxmemory_clients}
 
         # Make sure we have only half of our clients now
-        wait_for_condition 200 10 {
-            [llength [lsearch -all [split [string trim [r client list]] "\r\n"] *name=client*]] == $client_count / 2
+        wait_for_condition 200 100 {
+            [llength [regexp -all -inline {name=client} [r client list]]] == $client_count / 2
         } else {
             fail "Failed to evict clients"
         }

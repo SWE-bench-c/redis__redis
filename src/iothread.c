@@ -10,19 +10,19 @@
 #include "server.h"
 
 /* IO threads. */
-static IOThread IOThreads[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
+static IOThread IOThreads[IO_THREADS_MAX_NUM];
 
 /* For main thread */
-static list *pendingClientsForIOThreads[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
-static list *mainThreadProcessingClients[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
-static list *mainThreadPendingClients[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
-static pthread_mutex_t mainThreadPendingClientsMutexs[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
-static eventNotifier* mainThreadPendingClientsNotifiers[IO_THREADS_MAX_NUM] __attribute__((aligned(CACHE_LINE_SIZE)));
+static list *mainThreadPendingClientsToIOThreads[IO_THREADS_MAX_NUM];
+static list *mainThreadProcessingClients[IO_THREADS_MAX_NUM];
+static list *mainThreadPendingClients[IO_THREADS_MAX_NUM];
+static pthread_mutex_t mainThreadPendingClientsMutexs[IO_THREADS_MAX_NUM];
+static eventNotifier* mainThreadPendingClientsNotifiers[IO_THREADS_MAX_NUM];
 
-/* When IO threads read a complete query of clients or want to free clients,
- * it should remove it from its clients list and put the client in the list
- * for main thread, we will send these clients to main thread in beforeSleep. */
-void putInPendingClienstForMainThread(client *c, int unbind) {
+/* When IO threads read a complete query of clients or want to free clients, it
+ * should remove it from its clients list and put the client in the list to main
+ * thread, we will send these clients to main thread in IOThreadBeforeSleep. */
+void enqueuePendingClientsToMainThread(client *c, int unbind) {
     /* If the IO thread may no longer manage it, such as closing client, we should
      * unbind client from event loop, so main thread doesn't need to do it costly. */
     if (unbind) connUnbindEventLoop(c->conn);
@@ -32,7 +32,7 @@ void putInPendingClienstForMainThread(client *c, int unbind) {
         c->io_thread_client_list_node = NULL;
         /* Disable read and write to avoid race when main thread processes. */
         c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
-        listAddNodeTail(IOThreads[c->tid].pending_clients_for_main_thread, c);
+        listAddNodeTail(IOThreads[c->tid].pending_clients_to_main_thread, c);
     }
 }
 
@@ -41,7 +41,7 @@ void putInPendingClienstForMainThread(client *c, int unbind) {
 void unbindClientFromIOThreadEventLoop(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
                  c->running_tid == IOTHREAD_MAIN_THREAD_ID);
-    if (!connHasReadHandler(c->conn) && !connHasWriteHandler(c->conn)) return;
+    if (!connHasEventLoop(c->conn)) return;
     /* As calling in main thread, we should pause the io thread to make it safe. */
     pauseIOThread(c->tid);
     connUnbindEventLoop(c->conn);
@@ -49,7 +49,7 @@ void unbindClientFromIOThreadEventLoop(client *c) {
 }
 
 /* When main thread is processing a client from IO thread, and wants to keep it,
- * we should uninstall read and write handler from io thread event loop first,
+ * we should unbind connection of client from io thread event loop first,
  * and then bind the client connection into server's event loop. */
 void keepClientInMainThread(client *c) {
     serverAssert(c->tid != IOTHREAD_MAIN_THREAD_ID &&
@@ -82,10 +82,10 @@ void fetchClientFromIOThread(client *c) {
     } else {
         list *clients[5] = {
             IOThreads[c->tid].pending_clients,
-            IOThreads[c->tid].pending_clients_for_main_thread,
+            IOThreads[c->tid].pending_clients_to_main_thread,
             mainThreadPendingClients[c->tid],
             mainThreadProcessingClients[c->tid],
-            pendingClientsForIOThreads[c->tid]
+            mainThreadPendingClientsToIOThreads[c->tid]
         };
         for (int i = 0; i < 5; i++) {
             listNode *ln = listSearchKey(clients[i], c);
@@ -122,7 +122,7 @@ int isClientMustHandledByMainThread(client *c) {
 }
 
 /* When the main thread accepts a new client or transfers clients to IO threads,
- * it assign the client to the IO thread with the fewest clients. */
+ * it assigns the client to the IO thread with the fewest clients. */
 void assignClientToIOThread(client *c) {
     serverAssert(c->tid == IOTHREAD_MAIN_THREAD_ID);
     /* Find the IO thread with the fewest clients. */
@@ -146,13 +146,13 @@ void assignClientToIOThread(client *c) {
      * to IO thread in beforeSleep. */
     connUnbindEventLoop(c->conn);
     c->io_flags &= ~(CLIENT_IO_READ_ENABLED | CLIENT_IO_WRITE_ENABLED);
-    listAddNodeTail(pendingClientsForIOThreads[c->tid], c);
+    listAddNodeTail(mainThreadPendingClientsToIOThreads[c->tid], c);
 }
 
 /* If updating maxclients config, we not only resize the event loop of main thread
  * but also resize the event loop of all io threads, and if one thread is failed,
  * it is failed totally, since a fd can be distributed into any IO thread. */
-int resizeIOThreadsEventLoop(size_t newsize) {
+int resizeAllIOThreadsEventLoops(size_t newsize) {
     int result = AE_OK;
     if (server.io_threads_num <= 1) return result;
 
@@ -169,10 +169,10 @@ int resizeIOThreadsEventLoop(size_t newsize) {
 
 /* In the main thread, we may want to operate data of io threads, maybe uninstall
  * event handler, access query/output buffer or resize event loop, we need a clean
- * and safe context to do that. We pause io thread in its beforeSleep, do some jobs,
- * and then resume it. To avoid thead suspended, we use busy waiting to confirm the
- * target status. Besides we use atomic variable to make sure memory visibility and
- * ordering.
+ * and safe context to do that. We pause io thread in IOThreadBeforeSleep, do some,
+ * jobs and then resume it. To avoid thead suspended, we use busy waiting to confirm
+ * the target status. Besides we use atomic variable to make sure memory visibility
+ * and ordering.
  *
  * Make sure that only the main thread can call these function,
  *  - pauseIOThread, resumeIOThread
@@ -180,12 +180,12 @@ int resizeIOThreadsEventLoop(size_t newsize) {
  *  - pauseIOThreadsRange, resumeIOThreadsRange
  *
  * The main thread will pause the io thread, and then wait for the io thread to
- * be paused. The io thread will check the paused status in beforeSleep, and then
- * pause itself.
+ * be paused. The io thread will check the paused status in IOThreadBeforeSleep,
+ * and then pause itself.
  *
  * The main thread will resume the io thread, and then wait for the io thread to
- * be resumed. The io thread will check the paused status in beforeSleep, and then
- * resume itself.
+ * be resumed. The io thread will check the paused status in IOThreadBeforeSleep,
+ * and then resume itself.
  */
 
 /* We may pause the same io thread nestedly, so we need to record the times of
@@ -211,7 +211,7 @@ void pauseIOThreadsRange(int start, int end) {
         serverAssert(paused == IO_THREAD_UNPAUSED);
         atomicSetWithSync(IOThreads[i].paused, IO_THREAD_PAUSING);
         /* Just notify io thread, no actual job, since io threads check paused
-         * status in beforesleep, so just wake it up if polling wait. */
+         * status in IOThreadBeforeSleep, so just wake it up if polling wait. */
         triggerEventNotifier(IOThreads[i].pending_clients_notifier);
     }
 
@@ -274,11 +274,11 @@ void resumeAllIOThreads(void) {
 int sendPendingClientsToIOThreads(void) {
     int processed = 0;
     for (int i = 1; i < server.io_threads_num; i++) {
-        int len = listLength(pendingClientsForIOThreads[i]);
+        int len = listLength(mainThreadPendingClientsToIOThreads[i]);
         if (len > 0) {
             IOThread *t = &IOThreads[i];
             pthread_mutex_lock(&t->pending_clients_mutex);
-            listJoin(t->pending_clients, pendingClientsForIOThreads[i]);
+            listJoin(t->pending_clients, mainThreadPendingClientsToIOThreads[i]);
             pthread_mutex_unlock(&t->pending_clients_mutex);
             /* Trigger an event, maybe an error is returned when buffer is full
              * if using pipe, but no worry, io thread will handle all clients
@@ -363,7 +363,7 @@ void processClientsFromIOThread(IOThread *t) {
             listUnlinkNode(server.clients_pending_write, &c->clients_pending_write_node);
         }
         c->running_tid = c->tid;
-        listLinkNodeHead(pendingClientsForIOThreads[c->tid], node);
+        listLinkNodeHead(mainThreadPendingClientsToIOThreads[c->tid], node);
         node = NULL;
     }
     if (node) zfree(node);
@@ -378,20 +378,20 @@ void processClientsFromIOThread(IOThread *t) {
      * 
      * If we are in processEventsWhileBlocked, we don't send clients to io threads
      * now, we want to update server.events_processed_while_blocked accurately. */
-    if (listLength(pendingClientsForIOThreads[t->id]) &&
+    if (listLength(mainThreadPendingClientsToIOThreads[t->id]) &&
         server.aof_fsync != AOF_FSYNC_ALWAYS &&
         !ProcessingEventsWhileBlocked)
     {
         pthread_mutex_lock(&(t->pending_clients_mutex));
-        listJoin(t->pending_clients, pendingClientsForIOThreads[t->id]);
+        listJoin(t->pending_clients, mainThreadPendingClientsToIOThreads[t->id]);
         pthread_mutex_unlock(&(t->pending_clients_mutex));
         triggerEventNotifier(t->pending_clients_notifier);
     }
 }
 
 /* When the io thread finishes processing the client with the read event, it will
- * notify the main thread through event triggering in beforesleep. The main thread
- * handles the event through this function. */
+ * notify the main thread through event triggering in IOThreadBeforeSleep. The main
+ * thread handles the event through this function. */
 void handleClientsFromIOThread(struct aeEventLoop *el, int fd, void *ptr, int mask) {
     UNUSED(el);
     UNUSED(mask);
@@ -420,7 +420,7 @@ void handleClientsFromIOThread(struct aeEventLoop *el, int fd, void *ptr, int ma
  * processed, so we need to handle this scenario in beforeSleep. The function is to
  * process the commands of subsequent clients from io threads. And another function
  * sendPendingClientsToIOThreads make sure clients from io thread can get replies.
- * See also beforeSleep.*/
+ * See also beforeSleep. */
 void processClientsOfAllIOThreads(void) {
     for (int i = 1; i < server.io_threads_num; i++) {
         processClientsFromIOThread(&IOThreads[i]);
@@ -465,7 +465,7 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
 
         /* The client is asked to close, we just let main thread free it. */
         if (c->io_flags & CLIENT_IO_CLOSE_ASAP) {
-            putInPendingClienstForMainThread(c, 1);
+            enqueuePendingClientsToMainThread(c, 1);
             continue;
         }
 
@@ -474,8 +474,9 @@ void handleClientsFromMainThread(struct aeEventLoop *ae, int fd, void *ptr, int 
         c->io_flags &= ~CLIENT_IO_PENDING_COMMAND;
 
         /* Only bind once, we never remove read handler unless freeing client. */
-        if (!connHasReadHandler(c->conn)) {
+        if (!connHasEventLoop(c->conn)) {
             connRebindEventLoop(c->conn, t->el);
+            serverAssert(!connHasReadHandler(c->conn));
             connSetReadHandler(c->conn, readQueryFromClient);
         }
 
@@ -513,9 +514,9 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
 
     /* Check if there are clients to be processed in main thread, and then join
      * them to the list of main thread. */
-    if (listLength(t->pending_clients_for_main_thread) > 0) {
+    if (listLength(t->pending_clients_to_main_thread) > 0) {
         pthread_mutex_lock(&mainThreadPendingClientsMutexs[t->id]);
-        listJoin(mainThreadPendingClients[t->id], t->pending_clients_for_main_thread);
+        listJoin(mainThreadPendingClients[t->id], t->pending_clients_to_main_thread);
         pthread_mutex_unlock(&mainThreadPendingClientsMutexs[t->id]);
         /* Trigger an event, maybe an error is returned when buffer is full
          * if using pipe, but no worry, main thread will handle all clients
@@ -558,9 +559,8 @@ void initThreadedIO(void) {
         t->el->privdata[0] = t;
         t->pending_clients = listCreate();
         t->processing_clients = listCreate();
-        t->pending_clients_for_main_thread = listCreate();
+        t->pending_clients_to_main_thread = listCreate();
         t->clients = listCreate();
-        t->pending_clients_notifier = createEventNotifier();
         atomicSetWithSync(t->paused, IO_THREAD_UNPAUSED);
 
         pthread_mutexattr_t *attr = NULL;
@@ -571,6 +571,7 @@ void initThreadedIO(void) {
         #endif
         pthread_mutex_init(&t->pending_clients_mutex, attr);
 
+        t->pending_clients_notifier = createEventNotifier();
         if (aeCreateFileEvent(t->el, getReadEventFd(t->pending_clients_notifier),
                               AE_READABLE, handleClientsFromMainThread, t) != AE_OK)
         {
@@ -585,7 +586,7 @@ void initThreadedIO(void) {
         }
 
         /* For main thread */
-        pendingClientsForIOThreads[i] = listCreate();
+        mainThreadPendingClientsToIOThreads[i] = listCreate();
         mainThreadPendingClients[i] = listCreate();
         mainThreadProcessingClients[i] = listCreate();
         pthread_mutex_init(&mainThreadPendingClientsMutexs[i], attr);

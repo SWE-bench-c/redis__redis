@@ -324,6 +324,11 @@ static inline int connHasReadHandler(connection *conn) {
     return conn->read_handler != NULL;
 }
 
+/* Returns true if the connection is bound to an event loop */
+static inline int connHasEventLoop(connection *conn) {
+    return conn->el != NULL;
+}
+
 /* Unbind the current event loop from the connection, so that it can be
  * rebind to a different event loop in the future. */
 static inline void connUnbindEventLoop(connection *conn) {
