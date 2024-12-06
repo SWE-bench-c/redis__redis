@@ -1158,6 +1158,8 @@ typedef struct {
 typedef struct client {
     uint64_t id;            /* Client incremental unique ID. */
     uint64_t flags;         /* Client flags: CLIENT_* macros. */
+    listNode clients_pending_write_node; /* list node in clients_pending_write list.
+                                            accessed together with flags field */
     connection *conn;
     sds querybuf;           /* Buffer we use to accumulate client queries. */
     size_t qb_pos;          /* The position we have read in querybuf. */
@@ -1177,11 +1179,14 @@ typedef struct client {
                                      Used to update error stats in case the c->cmd was modified
                                      during the command invocation (like on GEOADD for example). */
     int argv_len;           /* Size of argv array (may be more than argc) */
+    int argc;               /* Num of arguments of current command. */
     int original_argc;      /* Num of arguments of original command if arguments were rewritten. */
+    int multibulklen;       /* Number of multi bulk arguments left to read. */
     robj **original_argv;   /* Arguments of original command if arguments were rewritten. */
     size_t argv_len_sum;    /* Sum of lengths of objects in argv list. */
-    int argc;               /* Num of arguments of current command. */
     int resp;               /* RESP protocol version. Can be 2 or 3. */
+    int slot;               /* The slot the client is executing against. Set to -1 if no slot is being used */
+
     redisDb *db;            /* Pointer to currently SELECTed DB. */
     robj *name;             /* As set by CLIENT SETNAME. */
     robj *lib_name;         /* The client library name as set by CLIENT SETINFO. */
@@ -1192,8 +1197,6 @@ typedef struct client {
     user *user;             /* User associated with this connection. If the
                                user is set to NULL the connection can do
                                anything (admin). */
-    int multibulklen;       /* Number of multi bulk arguments left to read. */
-    int slot;               /* The slot the client is executing against. Set to -1 if no slot is being used */
     unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
     list *deferred_reply_errors;    /* Used for module thread safe contexts. */
     time_t ctime;           /* Client creation time. */
@@ -1272,9 +1275,6 @@ typedef struct client {
                                   * see the definition of replBufBlock. */
     size_t ref_block_pos;        /* Access position of referenced buffer block,
                                   * i.e. the next offset to send. */
-
-    /* list node in clients_pending_write list */
-    listNode clients_pending_write_node;
 #ifdef LOG_REQ_RES
     clientReqResInfo reqres;
 #endif
