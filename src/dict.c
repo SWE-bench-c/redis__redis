@@ -759,16 +759,13 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
-static inline dictEntry *_dictFindByHash(dict *d, const void *key, uint64_t *hash) {
+static inline dictEntry *_dictFindByHash(dict *d, const void *key, const uint64_t hash) {
     dictEntry *he;
     uint64_t idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
 
-    /* Calculate the hash only if it's not provided */
-    uint64_t h = (hash == NULL) ? dictHashKey(d, key, d->useStoredKeyApi) : *hash;
-
-    idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
     /* Rehash the hash table if needed */
@@ -776,7 +773,7 @@ static inline dictEntry *_dictFindByHash(dict *d, const void *key, uint64_t *has
 
     for (table = 0; table <= 1; table++) {
         if (table == 0 && (long)idx < d->rehashidx) continue;
-        idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+        idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
 
         /* Prefetch the bucket at the calculated index */
         redis_prefetch_read(&d->ht_table[table][idx]);
@@ -800,13 +797,13 @@ static inline dictEntry *_dictFindByHash(dict *d, const void *key, uint64_t *has
 
 dictEntry *dictFind(dict *d, const void *key)
 {
-    uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
+    const uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
     return _dictFindByHash(d,key,hash);
 }
 
-dictEntry *dictFindByHash(dict *d, const void *key, uint64_t hash)
+dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash)
 {
-    return _dictFindByHash(d,key,&hash);
+    return _dictFindByHash(d,key,hash);
 }
 
 void *dictFetchValue(dict *d, const void *key) {
@@ -1683,7 +1680,7 @@ uint64_t dictGetHash(dict *d, const void *key) {
  * the hash value should be provided using dictGetHash.
  * no string / key comparison is performed.
  * return value is a pointer to the dictEntry if found, or NULL if not found. */
-dictEntry *dictFindEntryByPtrAndHash(dict *d, const void *oldptr, uint64_t hash) {
+dictEntry *dictFindByHashAndPtr(dict *d, const void *oldptr, const uint64_t hash) {
     dictEntry *he;
     unsigned long idx, table;
 
