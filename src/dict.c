@@ -122,11 +122,13 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, size_t len) {
 #define ENTRY_PTR_MASK     7 /* 111 */
 #define ENTRY_PTR_NORMAL   0 /* 000 */
 #define ENTRY_PTR_NO_VALUE 2 /* 010 */
+#define ENTRY_PTR_IS_ODD_KEY  1 /* XX1 : If it is a pointer to odd key address (must be 1). */
+#define ENTRY_PTR_IS_EVEN_KEY 4 /* 100 : If it is a pointer to even key address. */
 
 /* Returns 1 if the entry pointer is a pointer to a key, rather than to an
  * allocated entry. Returns 0 otherwise. */
 static inline int entryIsKey(const dictEntry *de) {
-    return (uintptr_t)(void *)de & 1;
+    return ((uintptr_t)de & ENTRY_PTR_IS_ODD_KEY) || ((uintptr_t)de & ENTRY_PTR_IS_EVEN_KEY);
 }
 
 /* Returns 1 if the pointer is actually a pointer to a dictEntry struct. Returns
@@ -155,7 +157,6 @@ static inline dictEntry *encodeMaskedPtr(const void *ptr, unsigned int bits) {
 }
 
 static inline void *decodeMaskedPtr(const dictEntry *de) {
-    assert(!entryIsKey(de));
     return (void *)((uintptr_t)(void *)de & ~ENTRY_PTR_MASK);
 }
 
@@ -326,18 +327,18 @@ static void rehashEntriesInBucketAtIndex(dict *d, uint64_t idx) {
             h = idx & DICTHT_SIZE_MASK(d->ht_size_exp[1]);
         }
         if (d->type->no_value) {
-            if (d->type->keys_are_odd && !d->ht_table[1][h]) {
-                /* Destination bucket is empty and we can store the key
-                 * directly without an allocated entry. Free the old entry
-                 * if it's an allocated entry.
-                 *
-                 * TODO: Add a flag 'keys_are_even' and if set, we can use
-                 * this optimization for these dicts too. We can set the LSB
-                 * bit when stored as a dict entry and clear it again when
-                 * we need the key back. */
-                assert(entryIsKey(key));
+            if (!d->ht_table[1][h]) 
+            {
+                /* The destination bucket is empty, allowing the key to be stored 
+                 * directly without allocating a dictEntry. If an old entry was 
+                 * previously allocated, free its memory. */                
                 if (!entryIsKey(de)) zfree(decodeMaskedPtr(de));
-                de = key;
+                
+                if (d->type->keys_are_odd)
+                    de = key; /* ENTRY_PTR_IS_ODD_KEY trivially set by the odd key. */
+                else
+                    de = encodeMaskedPtr(key, ENTRY_PTR_IS_EVEN_KEY);
+                
             } else if (entryIsKey(de)) {
                 /* We don't have an allocated entry but we need one. */
                 de = createEntryNoValue(key, d->ht_table[1][h]);
@@ -522,16 +523,17 @@ dictEntry *dictInsertAtPosition(dict *d, void *key, void *position) {
     assert(bucket >= &d->ht_table[htidx][0] &&
            bucket <= &d->ht_table[htidx][DICTHT_SIZE_MASK(d->ht_size_exp[htidx])]);
     if (d->type->no_value) {
-        if (d->type->keys_are_odd && !*bucket) {
-            /* We can store the key directly in the destination bucket without the
-             * allocated entry.
-             *
-             * TODO: Add a flag 'keys_are_even' and if set, we can use this
-             * optimization for these dicts too. We can set the LSB bit when
-             * stored as a dict entry and clear it again when we need the key
-             * back. */
-            entry = key;
-            assert(entryIsKey(entry));
+        if (!*bucket) {
+            /* We can store the key directly in the destination bucket without 
+             * allocating dictEntry.
+             */
+            if (d->type->keys_are_odd) {
+                entry = key;
+                assert(entryIsKey(entry));
+                /* The flag ENTRY_PTR_IS_ODD_KEY (=0x1) is already aligned with LSB bit  */
+            } else {
+                entry = encodeMaskedPtr(key, ENTRY_PTR_IS_EVEN_KEY);
+            }
         } else {
             /* Allocate an entry without value. */
             entry = createEntryNoValue(key, *bucket);
@@ -887,7 +889,10 @@ double dictIncrDoubleVal(dictEntry *de, double val) {
 }
 
 void *dictGetKey(const dictEntry *de) {
-    if (entryIsKey(de)) return (void*)de;
+    /* if entryIsKey() */
+    if ((uintptr_t)de & ENTRY_PTR_IS_ODD_KEY) return (void *) de;
+    if ((uintptr_t)de & ENTRY_PTR_IS_EVEN_KEY) return decodeMaskedPtr(de);    
+    /* Regular entry */ 
     if (entryIsNoValue(de)) return decodeEntryNoValue(de)->key;
     return de->key;
 }
@@ -1847,157 +1852,18 @@ dictType BenchmarkDictType = {
     printf(msg ": %ld items in %lld ms\n", count, elapsed); \
 } while(0)
 
-/* ./redis-server test dict [<count> | --accurate] */
-int dictTest(int argc, char **argv, int flags) {
+void dictBenchmark(long count) {
     long j;
     long long start, elapsed;
     int retval;
     dict *dict = dictCreate(&BenchmarkDictType);
-    long count = 0;
-    unsigned long new_dict_size, current_dict_used, remain_keys;
-    int accurate = (flags & REDIS_TEST_ACCURATE);
-
-    if (argc == 4) {
-        if (accurate) {
-            count = 5000000;
-        } else {
-            count = strtol(argv[3],NULL,10);
-        }
-    } else {
-        count = 5000;
-    }
-
-    TEST("Add 16 keys and verify dict resize is ok") {
-        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
-        for (j = 0; j < 16; j++) {
-            retval = dictAdd(dict,stringFromLongLong(j),(void*)j);
-            assert(retval == DICT_OK);
-        }
-        while (dictIsRehashing(dict)) dictRehashMicroseconds(dict,1000);
-        assert(dictSize(dict) == 16);
-        assert(dictBuckets(dict) == 16);
-    }
-
-    TEST("Use DICT_RESIZE_AVOID to disable the dict resize and pad to (dict_force_resize_ratio * 16)") {
-        /* Use DICT_RESIZE_AVOID to disable the dict resize, and pad
-         * the number of keys to (dict_force_resize_ratio * 16), so we can satisfy
-         * dict_force_resize_ratio in next test. */
-        dictSetResizeEnabled(DICT_RESIZE_AVOID);
-        for (j = 16; j < (long)dict_force_resize_ratio * 16; j++) {
-            retval = dictAdd(dict,stringFromLongLong(j),(void*)j);
-            assert(retval == DICT_OK);
-        }
-        current_dict_used = dict_force_resize_ratio * 16;
-        assert(dictSize(dict) == current_dict_used);
-        assert(dictBuckets(dict) == 16);
-    }
-
-    TEST("Add one more key, trigger the dict resize") {
-        retval = dictAdd(dict,stringFromLongLong(current_dict_used),(void*)(current_dict_used));
-        assert(retval == DICT_OK);
-        current_dict_used++;
-        new_dict_size = 1UL << _dictNextExp(current_dict_used);
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == 16);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == new_dict_size);
-
-        /* Wait for rehashing. */
-        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
-        while (dictIsRehashing(dict)) dictRehashMicroseconds(dict,1000);
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == new_dict_size);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == 0);
-    }
-
-    TEST("Delete keys until we can trigger shrink in next test") {
-        /* Delete keys until we can satisfy (1 / HASHTABLE_MIN_FILL) in the next test. */
-        for (j = new_dict_size / HASHTABLE_MIN_FILL + 1; j < (long)current_dict_used; j++) {
-            char *key = stringFromLongLong(j);
-            retval = dictDelete(dict, key);
-            zfree(key);
-            assert(retval == DICT_OK);
-        }
-        current_dict_used = new_dict_size / HASHTABLE_MIN_FILL + 1;
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == new_dict_size);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == 0);
-    }
-
-    TEST("Delete one more key, trigger the dict resize") {
-        current_dict_used--;
-        char *key = stringFromLongLong(current_dict_used);
-        retval = dictDelete(dict, key);
-        zfree(key);
-        unsigned long oldDictSize = new_dict_size;
-        new_dict_size = 1UL << _dictNextExp(current_dict_used);
-        assert(retval == DICT_OK);
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == oldDictSize);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == new_dict_size);
-
-        /* Wait for rehashing. */
-        while (dictIsRehashing(dict)) dictRehashMicroseconds(dict,1000);
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == new_dict_size);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == 0);
-    }
-
-    TEST("Empty the dictionary and add 128 keys") {
-        dictEmpty(dict, NULL);
-        for (j = 0; j < 128; j++) {
-            retval = dictAdd(dict,stringFromLongLong(j),(void*)j);
-            assert(retval == DICT_OK);
-        }
-        while (dictIsRehashing(dict)) dictRehashMicroseconds(dict,1000);
-        assert(dictSize(dict) == 128);
-        assert(dictBuckets(dict) == 128);
-    }
-
-    TEST("Use DICT_RESIZE_AVOID to disable the dict resize and reduce to 3") {
-        /* Use DICT_RESIZE_AVOID to disable the dict reset, and reduce
-         * the number of keys until we can trigger shrinking in next test. */
-        dictSetResizeEnabled(DICT_RESIZE_AVOID);
-        remain_keys = DICTHT_SIZE(dict->ht_size_exp[0]) / (HASHTABLE_MIN_FILL * dict_force_resize_ratio) + 1;
-        for (j = remain_keys; j < 128; j++) {
-            char *key = stringFromLongLong(j);
-            retval = dictDelete(dict, key);
-            zfree(key);
-            assert(retval == DICT_OK);
-        }
-        current_dict_used = remain_keys;
-        assert(dictSize(dict) == remain_keys);
-        assert(dictBuckets(dict) == 128);
-    }
-
-    TEST("Delete one more key, trigger the dict resize") {
-        current_dict_used--;
-        char *key = stringFromLongLong(current_dict_used);
-        retval = dictDelete(dict, key);
-        zfree(key);
-        new_dict_size = 1UL << _dictNextExp(current_dict_used);
-        assert(retval == DICT_OK);
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == 128);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == new_dict_size);
-
-        /* Wait for rehashing. */
-        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
-        while (dictIsRehashing(dict)) dictRehashMicroseconds(dict,1000);
-        assert(dictSize(dict) == current_dict_used);
-        assert(DICTHT_SIZE(dict->ht_size_exp[0]) == new_dict_size);
-        assert(DICTHT_SIZE(dict->ht_size_exp[1]) == 0);
-    }
-
-    TEST("Restore to original state") {
-        dictEmpty(dict, NULL);
-        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
-    }
 
     start_benchmark();
     for (j = 0; j < count; j++) {
         retval = dictAdd(dict,stringFromLongLong(j),(void*)j);
         assert(retval == DICT_OK);
-    }
+    } 
+    
     end_benchmark("Inserting");
     assert((long)dictSize(dict) == count);
 
@@ -2061,6 +1927,182 @@ int dictTest(int argc, char **argv, int flags) {
     }
     end_benchmark("Removing and adding");
     dictRelease(dict);
+}
+
+/* ./redis-server test dict [<count> | --accurate] */
+int dictTest(int argc, char **argv, int flags) {
+    long j;
+    int retval;
+    dict *d = dictCreate(&BenchmarkDictType);
+    long count = 0;
+    unsigned long new_dict_size, current_dict_used, remain_keys;
+    int accurate = (flags & REDIS_TEST_ACCURATE);
+
+    if (argc == 4) {
+        if (accurate) {
+            count = 5000000;
+        } else {
+            count = strtol(argv[3],NULL,10);
+        }
+    } else {
+        count = 5000;
+    }
+
+    TEST("Add 16 keys and verify dict resize is ok") {
+        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+        for (j = 0; j < 16; j++) {
+            retval = dictAdd(d,stringFromLongLong(j),(void*)j);
+            assert(retval == DICT_OK);
+        }
+        while (dictIsRehashing(d)) dictRehashMicroseconds(d,1000);
+        assert(dictSize(d) == 16);
+        assert(dictBuckets(d) == 16);
+    }
+
+    TEST("Use DICT_RESIZE_AVOID to disable the dict resize and pad to (dict_force_resize_ratio * 16)") {
+        /* Use DICT_RESIZE_AVOID to disable the dict resize, and pad
+         * the number of keys to (dict_force_resize_ratio * 16), so we can satisfy
+         * dict_force_resize_ratio in next test. */
+        dictSetResizeEnabled(DICT_RESIZE_AVOID);
+        for (j = 16; j < (long)dict_force_resize_ratio * 16; j++) {
+            retval = dictAdd(d,stringFromLongLong(j),(void*)j);
+            assert(retval == DICT_OK);
+        }
+        current_dict_used = dict_force_resize_ratio * 16;
+        assert(dictSize(d) == current_dict_used);
+        assert(dictBuckets(d) == 16);
+    }
+
+    TEST("Add one more key, trigger the dict resize") {
+        retval = dictAdd(d,stringFromLongLong(current_dict_used),(void*)(current_dict_used));
+        assert(retval == DICT_OK);
+        current_dict_used++;
+        new_dict_size = 1UL << _dictNextExp(current_dict_used);
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == 16);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == new_dict_size);
+
+        /* Wait for rehashing. */
+        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+        while (dictIsRehashing(d)) dictRehashMicroseconds(d,1000);
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == new_dict_size);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == 0);
+    }
+
+    TEST("Delete keys until we can trigger shrink in next test") {
+        /* Delete keys until we can satisfy (1 / HASHTABLE_MIN_FILL) in the next test. */
+        for (j = new_dict_size / HASHTABLE_MIN_FILL + 1; j < (long)current_dict_used; j++) {
+            char *key = stringFromLongLong(j);
+            retval = dictDelete(d, key);
+            zfree(key);
+            assert(retval == DICT_OK);
+        }
+        current_dict_used = new_dict_size / HASHTABLE_MIN_FILL + 1;
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == new_dict_size);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == 0);
+    }
+
+    TEST("Delete one more key, trigger the dict resize") {
+        current_dict_used--;
+        char *key = stringFromLongLong(current_dict_used);
+        retval = dictDelete(d, key);
+        zfree(key);
+        unsigned long oldDictSize = new_dict_size;
+        new_dict_size = 1UL << _dictNextExp(current_dict_used);
+        assert(retval == DICT_OK);
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == oldDictSize);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == new_dict_size);
+
+        /* Wait for rehashing. */
+        while (dictIsRehashing(d)) dictRehashMicroseconds(d,1000);
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == new_dict_size);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == 0);
+    }
+
+    TEST("Empty the dictionary and add 128 keys") {
+        dictEmpty(d, NULL);
+        for (j = 0; j < 128; j++) {
+            retval = dictAdd(d,stringFromLongLong(j),(void*)j);
+            assert(retval == DICT_OK);
+        }
+        while (dictIsRehashing(d)) dictRehashMicroseconds(d,1000);
+        assert(dictSize(d) == 128);
+        assert(dictBuckets(d) == 128);
+    }
+
+    TEST("Use DICT_RESIZE_AVOID to disable the dict resize and reduce to 3") {
+        /* Use DICT_RESIZE_AVOID to disable the dict reset, and reduce
+         * the number of keys until we can trigger shrinking in next test. */
+        dictSetResizeEnabled(DICT_RESIZE_AVOID);
+        remain_keys = DICTHT_SIZE(d->ht_size_exp[0]) / (HASHTABLE_MIN_FILL * dict_force_resize_ratio) + 1;
+        for (j = remain_keys; j < 128; j++) {
+            char *key = stringFromLongLong(j);
+            retval = dictDelete(d, key);
+            zfree(key);
+            assert(retval == DICT_OK);
+        }
+        current_dict_used = remain_keys;
+        assert(dictSize(d) == remain_keys);
+        assert(dictBuckets(d) == 128);
+    }
+
+    TEST("Delete one more key, trigger the dict resize") {
+        current_dict_used--;
+        char *key = stringFromLongLong(current_dict_used);
+        retval = dictDelete(d, key);
+        zfree(key);
+        new_dict_size = 1UL << _dictNextExp(current_dict_used);
+        assert(retval == DICT_OK);
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == 128);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == new_dict_size);
+
+        /* Wait for rehashing. */
+        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+        while (dictIsRehashing(d)) dictRehashMicroseconds(d,1000);
+        assert(dictSize(d) == current_dict_used);
+        assert(DICTHT_SIZE(d->ht_size_exp[0]) == new_dict_size);
+        assert(DICTHT_SIZE(d->ht_size_exp[1]) == 0);
+    }
+
+    TEST("Restore to original state") {
+        dictEmpty(d, NULL);
+        dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+    }
+    dictRelease(d);
+
+    TEST("Use dict without values (no_value=1)") {
+        dictType dt = BenchmarkDictType;
+        dt.no_value = 1;
+        
+        /* Allocate array of size count and fill it with keys (stringFromLongLong(j) */
+        char **lookupKeys = zmalloc(sizeof(char*) * count);
+        for (long j = 0; j < count; j++)
+            lookupKeys[j] = stringFromLongLong(j);
+
+
+        /* Add keys without values. */
+        dict *d = dictCreate(&dt);
+        for (j = 0; j < count; j++) {
+            retval = dictAdd(d,lookupKeys[j],NULL);            
+            assert(retval == DICT_OK);
+        }
+        
+        /* Now, we should be able to find the keys. */
+        for (j = 0; j < count; j++) {
+            dictEntry *de = dictFind(d,lookupKeys[j]);
+            assert(de != NULL);
+        }
+        dictRelease(d);
+        zfree(lookupKeys);
+    }
+
+    dictBenchmark(count);
+
     return 0;
 }
 #endif
