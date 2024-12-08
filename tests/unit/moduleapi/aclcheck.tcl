@@ -50,7 +50,7 @@ start_server {tags {"modules acl"}} {
         catch {r aclcheck.set.check.prefixkey "~" ESCAPED_STAR* ESCAPED_STAR* 5} e
         assert_match "*DENIED KEY*" $e        
         assert_equal [r aclcheck.set.check.prefixkey "~" NON_ESCAPED_STAR\\ NON_ESCAPED_STAR\\clothes 5] OK
-    }    
+    }
     
     test {check ACL permissions versus empty string prefix} {
         # The empty string should should match all keys permissions    
