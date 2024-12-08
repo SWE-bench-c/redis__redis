@@ -800,7 +800,8 @@ static inline dictEntry *_dictFindByHash(dict *d, const void *key, uint64_t *has
 
 dictEntry *dictFind(dict *d, const void *key)
 {
-    return _dictFindByHash(d,key,NULL);
+    uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
+    return _dictFindByHash(d,key,hash);
 }
 
 dictEntry *dictFindByHash(dict *d, const void *key, uint64_t hash)
@@ -1607,7 +1608,6 @@ static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx) {
         dictRehash(d,1);
     }
 }
-
 /* Our hash table capability is a power of two */
 static signed char _dictNextExp(unsigned long size)
 {
