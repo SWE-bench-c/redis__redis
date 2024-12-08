@@ -53,7 +53,7 @@ start_server {tags {"modules acl"}} {
     }
     
     test {check ACL permissions versus empty string prefix} {
-        # The empty string should should match all keys permissions    
+        # The empty string should should match all keys permissions
         r acl setuser default +set resetkeys %R~* %W~* ~*
         assert_equal [r aclcheck.set.check.prefixkey "~" "" CART_BOOKS_12 5] OK
         assert_equal [r aclcheck.set.check.prefixkey "W" "" ORDER_2024_564879 5] OK
