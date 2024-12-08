@@ -1755,11 +1755,7 @@ void pfdebugCommand(client *c) {
             addReplyError(c, "Argument must be ON or OFF");
         }
 
-        if (HLL_USE_AVX2) {
-            addReplyStatus(c, "enabled");
-        } else {
-            addReplyStatus(c, "disabled");
-        }
+        addReplyStatus(c, HLL_USE_AVX2 ? "enabled" : "disabled");
 
         return;
     }
