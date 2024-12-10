@@ -13,11 +13,11 @@
 static IOThread IOThreads[IO_THREADS_MAX_NUM];
 
 /* For main thread */
-static list *mainThreadPendingClientsToIOThreads[IO_THREADS_MAX_NUM];
-static list *mainThreadProcessingClients[IO_THREADS_MAX_NUM];
-static list *mainThreadPendingClients[IO_THREADS_MAX_NUM];
-static pthread_mutex_t mainThreadPendingClientsMutexs[IO_THREADS_MAX_NUM];
-static eventNotifier* mainThreadPendingClientsNotifiers[IO_THREADS_MAX_NUM];
+static list *mainThreadPendingClientsToIOThreads[IO_THREADS_MAX_NUM]; /* Clients to IO threads */
+static list *mainThreadProcessingClients[IO_THREADS_MAX_NUM]; /* Clients in processing */
+static list *mainThreadPendingClients[IO_THREADS_MAX_NUM]; /* Pending clients from IO threads */
+static pthread_mutex_t mainThreadPendingClientsMutexes[IO_THREADS_MAX_NUM]; /* Mutex for pending clients */
+static eventNotifier* mainThreadPendingClientsNotifiers[IO_THREADS_MAX_NUM]; /* Notifier for pending clients */
 
 /* When IO threads read a complete query of clients or want to free clients, it
  * should remove it from its clients list and put the client in the list to main
@@ -169,8 +169,8 @@ int resizeAllIOThreadsEventLoops(size_t newsize) {
 
 /* In the main thread, we may want to operate data of io threads, maybe uninstall
  * event handler, access query/output buffer or resize event loop, we need a clean
- * and safe context to do that. We pause io thread in IOThreadBeforeSleep, do some,
- * jobs and then resume it. To avoid thead suspended, we use busy waiting to confirm
+ * and safe context to do that. We pause io thread in IOThreadBeforeSleep, do some
+ * jobs and then resume it. To avoid thread suspended, we use busy waiting to confirm
  * the target status. Besides we use atomic variable to make sure memory visibility
  * and ordering.
  *
@@ -403,9 +403,9 @@ void handleClientsFromIOThread(struct aeEventLoop *el, int fd, void *ptr, int ma
     handleEventNotifier(mainThreadPendingClientsNotifiers[t->id]);
 
     /* Get the list of clients to process. */
-    pthread_mutex_lock(&mainThreadPendingClientsMutexs[t->id]);
+    pthread_mutex_lock(&mainThreadPendingClientsMutexes[t->id]);
     listJoin(mainThreadProcessingClients[t->id], mainThreadPendingClients[t->id]);
-    pthread_mutex_unlock(&mainThreadPendingClientsMutexs[t->id]);
+    pthread_mutex_unlock(&mainThreadPendingClientsMutexes[t->id]);
     if (listLength(mainThreadProcessingClients[t->id]) == 0) return;
 
     /* Process the clients from IO threads. */
@@ -515,9 +515,9 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
     /* Check if there are clients to be processed in main thread, and then join
      * them to the list of main thread. */
     if (listLength(t->pending_clients_to_main_thread) > 0) {
-        pthread_mutex_lock(&mainThreadPendingClientsMutexs[t->id]);
+        pthread_mutex_lock(&mainThreadPendingClientsMutexes[t->id]);
         listJoin(mainThreadPendingClients[t->id], t->pending_clients_to_main_thread);
-        pthread_mutex_unlock(&mainThreadPendingClientsMutexs[t->id]);
+        pthread_mutex_unlock(&mainThreadPendingClientsMutexes[t->id]);
         /* Trigger an event, maybe an error is returned when buffer is full
          * if using pipe, but no worry, main thread will handle all clients
          * in list when receiving a notification. */
@@ -589,7 +589,7 @@ void initThreadedIO(void) {
         mainThreadPendingClientsToIOThreads[i] = listCreate();
         mainThreadPendingClients[i] = listCreate();
         mainThreadProcessingClients[i] = listCreate();
-        pthread_mutex_init(&mainThreadPendingClientsMutexs[i], attr);
+        pthread_mutex_init(&mainThreadPendingClientsMutexes[i], attr);
         mainThreadPendingClientsNotifiers[i] = createEventNotifier();
         if (aeCreateFileEvent(server.el, getReadEventFd(mainThreadPendingClientsNotifiers[i]),
                               AE_READABLE, handleClientsFromIOThread, t) != AE_OK)
