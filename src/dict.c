@@ -1605,6 +1605,7 @@ static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx) {
         dictRehash(d,1);
     }
 }
+
 /* Our hash table capability is a power of two */
 static signed char _dictNextExp(unsigned long size)
 {
