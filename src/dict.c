@@ -2097,11 +2097,24 @@ int dictTest(int argc, char **argv, int flags) {
             dictEntry *de = dictFind(d,lookupKeys[j]);
             assert(de != NULL);
         }
+        
+        /* Find non exists keys. */
+        for (j = 0; j < count; j++) {
+            /* Temporarily override first char of key */
+            char tmp = lookupKeys[j][0];  
+            lookupKeys[j][0] = 'X';
+            dictEntry *de = dictFind(d,lookupKeys[j]);
+            lookupKeys[j][0] = tmp;
+            assert(de == NULL);
+        }     
+        
         dictRelease(d);
         zfree(lookupKeys);
     }
 
-    dictBenchmark(count);
+    TEST("test - dict benchmark") {
+        dictBenchmark(count);
+    }
 
     return 0;
 }
