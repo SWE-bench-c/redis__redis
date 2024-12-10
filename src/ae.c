@@ -42,7 +42,7 @@
     #endif
 #endif
 
-#define INITIAL_EVENT 32
+#define INITIAL_EVENT 1024
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
