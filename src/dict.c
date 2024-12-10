@@ -759,7 +759,7 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
-static inline dictEntry *_dictFindByHash(dict *d, const void *key, const uint64_t hash) {
+dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
     dictEntry *he;
     uint64_t idx, table;
 
@@ -797,13 +797,9 @@ static inline dictEntry *_dictFindByHash(dict *d, const void *key, const uint64_
 
 dictEntry *dictFind(dict *d, const void *key)
 {
+    if (dictSize(d) == 0) return NULL; /* dict is empty */
     const uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
-    return _dictFindByHash(d,key,hash);
-}
-
-dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash)
-{
-    return _dictFindByHash(d,key,hash);
+    return dictFindByHash(d,key,hash);
 }
 
 void *dictFetchValue(dict *d, const void *key) {
