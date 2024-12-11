@@ -662,8 +662,10 @@ void listPopRangeAndReplyWithKey(client *c, robj *o, robj *key, int where, long 
  * Note that the purpose is to make the methods small so that the
  * code in the loop can be inlined better to improve performance. */
 void addListQuicklistRangeReply(client *c, robj *o, int from, int rangelen, int reverse) {
+    writePreparedClient *wpc = prepareClientForFutureWrites(c);
+    if (!wpc) return;
     /* Return the result in form of a multi-bulk reply */
-    addReplyArrayLen(c,rangelen);
+    addWritePreparedReplyArrayLen(wpc, rangelen);
 
     int direction = reverse ? AL_START_TAIL : AL_START_HEAD;
     quicklistIter *iter = quicklistGetIteratorAtIdx(o->ptr, direction, from);
@@ -671,9 +673,9 @@ void addListQuicklistRangeReply(client *c, robj *o, int from, int rangelen, int 
         quicklistEntry qe;
         serverAssert(quicklistNext(iter, &qe)); /* fail on corrupt data */
         if (qe.value) {
-            addReplyBulkCBuffer(c,qe.value,qe.sz);
+            addWritePreparedReplyBulkCBuffer(wpc, qe.value, qe.sz);
         } else {
-            addReplyBulkLongLong(c,qe.longval);
+            addWritePreparedReplyBulkLongLong(wpc, qe.longval);
         }
     }
     quicklistReleaseIterator(iter);
@@ -683,19 +685,20 @@ void addListQuicklistRangeReply(client *c, robj *o, int from, int rangelen, int 
  * Note that the purpose is to make the methods small so that the
  * code in the loop can be inlined better to improve performance. */
 void addListListpackRangeReply(client *c, robj *o, int from, int rangelen, int reverse) {
+    writePreparedClient *wpc = prepareClientForFutureWrites(c);
+    if (!wpc) return;
+    /* Return the result in form of a multi-bulk reply */
+    addWritePreparedReplyArrayLen(wpc, rangelen);
     unsigned char *lp = o->ptr;
     unsigned char *p = lpSeek(lp, from);
     const size_t lpbytes = lpBytes(lp);
     int64_t vlen;
 
-    /* Return the result in form of a multi-bulk reply */
-    addReplyArrayLen(c,rangelen);
-
     while(rangelen--) {
         serverAssert(p); /* fail on corrupt data */
         unsigned char buf[LP_INTBUF_SIZE];
         unsigned char *vstr = lpGet(p,&vlen,buf);
-        addReplyBulkCBuffer(c,vstr,vlen);
+        addWritePreparedReplyBulkCBuffer(wpc, vstr, vlen);
         p = reverse ? lpPrev(lp,p) : lpNextWithBytes(lp,p,lpbytes);
     }
 }
