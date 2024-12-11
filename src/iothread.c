@@ -249,6 +249,24 @@ void resumeIOThreadsRange(int start, int end) {
     }
 }
 
+/* The IO thread checks whether it is being paused, and if so, it pauses itself
+ * and waits for resuming, corresponding to the pause/resumeIOThread* functions.
+ * Currently, this is only called in IOThreadBeforeSleep, as there are no pending
+ * I/O events at this point, with a clean context. */
+void handlePauseAndResume(IOThread *t) {
+    int paused;
+    /* Check if i am being paused. */
+    atomicGetWithSync(t->paused, paused);
+    if (paused == IO_THREAD_PAUSING) {
+        atomicSetWithSync(t->paused, IO_THREAD_PAUSED);
+        /* Wait for resuming */
+        while (paused != IO_THREAD_RESUMING) {
+            atomicGetWithSync(t->paused, paused);
+        }
+        atomicSetWithSync(t->paused, IO_THREAD_UNPAUSED);
+    }
+}
+
 /* Pause the specific io thread, and wait for it to be paused. */
 void pauseIOThread(int id) {
     pauseIOThreadsRange(id, id);
@@ -500,17 +518,8 @@ void IOThreadBeforeSleep(struct aeEventLoop *el) {
     /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
     aeSetDontWait(el, connTypeHasPendingData(el));
 
-    /* Check if i am pausing */
-    int paused;
-    atomicGetWithSync(t->paused, paused);
-    if (paused == IO_THREAD_PAUSING) {
-        atomicSetWithSync(t->paused, IO_THREAD_PAUSED);
-        /* Wait for resuming */
-        while (paused != IO_THREAD_RESUMING) {
-            atomicGetWithSync(t->paused, paused);
-        }
-        atomicSetWithSync(t->paused, IO_THREAD_UNPAUSED);
-    }
+    /* Check if i am being paused, pause myself and resume. */
+    handlePauseAndResume(t);
 
     /* Check if there are clients to be processed in main thread, and then join
      * them to the list of main thread. */
