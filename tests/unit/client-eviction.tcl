@@ -538,7 +538,8 @@ start_server {} {
         foreach size [lreverse $sizes] {
             set control_mem [client_field control tot-mem]
             set total_mem [expr $total_mem - $clients_per_size * $size]
-            r config set maxmemory-clients [expr $total_mem + $control_mem]
+            # allow some tolerance when using io threads
+            r config set maxmemory-clients [expr $total_mem + $control_mem + 1000]
             set clients [split [string trim [r client list]] "\r\n"]
             # Verify only relevant clients were evicted
             for {set i 0} {$i < [llength $sizes]} {incr i} {
