@@ -675,6 +675,8 @@ run_solo {defrag} {
                 if {[lindex [r config get io-threads] 1] == 1} {
                     assert_lessthan_equal [s allocator_frag_ratio] 1.05
                 } else {
+                    # TODO: When multithreading is enabled, argv may be created in the io thread
+                    # and kept in the main thread, which can cause fragmentation to become worse.
                     assert_lessthan_equal [s allocator_frag_ratio] 1.1
                 }
             }
