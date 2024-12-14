@@ -586,6 +586,100 @@ run_solo {defrag} {
             }
         }
 
+        test "Active defrag for argv retained by the main thread from IO thread: $type" {
+            r flushdb
+            r config set hz 100
+            r config set activedefrag no
+            wait_for_defrag_stop 500 100
+            r config resetstat
+            if {[lindex [r config get io-threads] 1] == 1} {
+                r config set active-defrag-threshold-lower 5
+            } else {
+                r config set active-defrag-threshold-lower 10
+            }
+            r config set active-defrag-cycle-min 65
+            r config set active-defrag-cycle-max 75
+            r config set active-defrag-ignore-bytes 1000kb
+            r config set maxmemory 0
+
+            # Create some clients so that they are distributed among different io threads.
+            set clients {}
+            for {set i 0} {$i < 32} {incr i} {
+                lappend clients [redis_client]
+            }
+
+            # Populate memory with interleaving key pattern of same size
+            set dummy "--[string repeat x 400]\nreturn "
+            set n 50000
+            for {set j 0} {$j < $n} {incr j} {
+                set val "$dummy[format "%06d" $j]"
+                set rr [lindex $clients [expr {int(rand() * 32)}]]
+                $rr set k$j $val
+                $rr set f$j $val
+            }
+
+            for {set i 0} {$i < 32} {incr i} {
+                [lindex $clients $i] close
+            }
+            
+            after 120 ;# serverCron only updates the info once in 100ms
+            if {$::verbose} {
+                puts "used [s allocator_allocated]"
+                puts "rss [s allocator_active]"
+                puts "frag [s allocator_frag_ratio]"
+                puts "frag_bytes [s allocator_frag_bytes]"
+            }
+            assert_lessthan [s allocator_frag_ratio] 1.05
+
+            # Delete all the keys to create fragmentation
+            set rd [redis_deferring_client]
+            for {set j 0} {$j < $n} {incr j} { $rd del f$j }
+            for {set j 0} {$j < $n} {incr j} { $rd read } ; # Discard del replies
+            $rd close
+
+            after 120 ;# serverCron only updates the info once in 100ms
+            if {$::verbose} {
+                puts "used [s allocator_allocated]"
+                puts "rss [s allocator_active]"
+                puts "frag [s allocator_frag_ratio]"
+                puts "frag_bytes [s allocator_frag_bytes]"
+            }
+            assert_morethan [s allocator_frag_ratio] 1.4
+
+            catch {r config set activedefrag yes} e
+            if {[r config get activedefrag] eq "activedefrag yes"} {
+            
+                # wait for the active defrag to start working (decision once a second)
+                wait_for_condition 50 100 {
+                    [s total_active_defrag_time] ne 0
+                } else {
+                    after 120 ;# serverCron only updates the info once in 100ms
+                    puts [r info memory]
+                    puts [r info stats]
+                    puts [r memory malloc-stats]
+                    fail "defrag not started."
+                }
+
+                # wait for the active defrag to stop working
+                wait_for_defrag_stop 500 100
+
+                # test the fragmentation is lower
+                after 120 ;# serverCron only updates the info once in 100ms
+                if {$::verbose} {
+                    puts "used [s allocator_allocated]"
+                    puts "rss [s allocator_active]"
+                    puts "frag [s allocator_frag_ratio]"
+                    puts "frag_bytes [s allocator_frag_bytes]"
+                }
+
+                if {[lindex [r config get io-threads] 1] == 1} {
+                    assert_lessthan_equal [s allocator_frag_ratio] 1.05
+                } else {
+                    assert_lessthan_equal [s allocator_frag_ratio] 1.1
+                }
+            }
+        }
+
         if {$type eq "standalone"} { ;# skip in cluster mode
         test "Active defrag big list: $type" {
             r flushdb
@@ -793,9 +887,9 @@ run_solo {defrag} {
     }
     }
 
-    # start_cluster 1 0 {tags {"defrag external:skip cluster"} overrides {appendonly yes auto-aof-rewrite-percentage 0 save "" loglevel debug}} {
-    #     test_active_defrag "cluster"
-    # }
+    start_cluster 1 0 {tags {"defrag external:skip cluster"} overrides {appendonly yes auto-aof-rewrite-percentage 0 save "" loglevel debug}} {
+        test_active_defrag "cluster"
+    }
 
     start_server {tags {"defrag external:skip standalone"} overrides {appendonly yes auto-aof-rewrite-percentage 0 save "" loglevel debug}} {
         test_active_defrag "standalone"
