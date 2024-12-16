@@ -592,7 +592,8 @@ run_solo {defrag} {
             r config set activedefrag no
             wait_for_defrag_stop 500 100
             r config resetstat
-            if {[lindex [r config get io-threads] 1] == 1} {
+            set io_threads [lindex [r config get io-threads] 1]
+            if {$io_threads == 1} {
                 r config set active-defrag-threshold-lower 5
             } else {
                 r config set active-defrag-threshold-lower 10
@@ -604,24 +605,37 @@ run_solo {defrag} {
 
             # Create some clients so that they are distributed among different io threads.
             set clients {}
-            for {set i 0} {$i < 32} {incr i} {
+            for {set i 0} {$i < 8} {incr i} {
                 lappend clients [redis_client]
             }
 
             # Populate memory with interleaving key pattern of same size
-            set dummy "--[string repeat x 400]\nreturn "
-            set n 50000
-            for {set j 0} {$j < $n} {incr j} {
-                set val "$dummy[format "%06d" $j]"
-                set rr [lindex $clients [expr {int(rand() * 32)}]]
-                $rr set k$j $val
-                $rr set f$j $val
+            set dummy "[string repeat x 400]"
+            set n 10000
+            for {set i 0} {$i < [llength $clients]} {incr i} {
+                set rr [lindex $clients $i]
+                for {set j 0} {$j < $n} {incr j} {
+                    $rr set "k$i-$j" $dummy
+                }
             }
 
-            for {set i 0} {$i < 32} {incr i} {
-                [lindex $clients $i] close
+            # If io-threads is enable, verify that memory allocation is not from the main thread.
+            if {$io_threads != 1} {
+                # At least make sure that bin 448 is created in the main thread's arena.
+                r set k dummy
+                r del k
+
+                # We created 10000 string keys of 400 bytes each for each client, so when the memory
+                # allocation for the 448 bin in the main thread is significantly smaller than this,
+                # we can conclude that the memory allocation is not coming from it.
+                set malloc_stats [r memory malloc-stats]
+                if {[regexp {(?s)arenas\[0\]:.*?448[ ]+[\d]+[ ]+([\d]+)[ ]} $malloc_stats - result]} {
+                    assert_lessthan $result 200000
+                } else {
+                    fail "Failed to get the main thread's malloc stats."
+                }
             }
-            
+
             after 120 ;# serverCron only updates the info once in 100ms
             if {$::verbose} {
                 puts "used [s allocator_allocated]"
@@ -631,11 +645,16 @@ run_solo {defrag} {
             }
             assert_lessthan [s allocator_frag_ratio] 1.05
 
-            # Delete all the keys to create fragmentation
-            set rd [redis_deferring_client]
-            for {set j 0} {$j < $n} {incr j} { $rd del f$j }
-            for {set j 0} {$j < $n} {incr j} { $rd read } ; # Discard del replies
-            $rd close
+            # Delete keys with even indices to create fragmentation.
+            for {set i 0} {$i < [llength $clients]} {incr i} {
+                set rd [lindex $clients $i]
+                for {set j 0} {$j < $n} {incr j 2} {
+                    $rd del "k$i-$j"
+                }
+            }
+            for {set i 0} {$i < [llength $clients]} {incr i} {
+                [lindex $clients $i] close
+            }
 
             after 120 ;# serverCron only updates the info once in 100ms
             if {$::verbose} {
@@ -672,7 +691,7 @@ run_solo {defrag} {
                     puts "frag_bytes [s allocator_frag_bytes]"
                 }
 
-                if {[lindex [r config get io-threads] 1] == 1} {
+                if {$io_threads == 1} {
                     assert_lessthan_equal [s allocator_frag_ratio] 1.05
                 } else {
                     # TODO: When multithreading is enabled, argv may be created in the io thread
