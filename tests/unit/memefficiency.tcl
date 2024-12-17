@@ -629,8 +629,10 @@ run_solo {defrag} {
                 # allocation for the 448 bin in the main thread is significantly smaller than this,
                 # we can conclude that the memory allocation is not coming from it.
                 set malloc_stats [r memory malloc-stats]
-                if {[regexp {(?s)arenas\[0\]:.*?448[ ]+[\d]+[ ]+([\d]+)[ ]} $malloc_stats - result]} {
-                    assert_lessthan $result 200000
+                if {[regexp {(?s)arenas\[0\]:.*?448[ ]+[\d]+[ ]+([\d]+)[ ]} $malloc_stats - allocated]} {
+                    # Ensure the allocation for bin 448 in the main thread’s arena
+                    # is far less than 4375k (10000 * 448 bytes).
+                    assert_lessthan $allocated 200000
                 } else {
                     fail "Failed to get the main thread's malloc stats."
                 }
