@@ -119,16 +119,16 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, size_t len) {
  * pointer actually points to. If the least bit is set, it's a key. Otherwise,
  * the bit pattern of the least 3 significant bits mark the kind of entry. */
 
-#define ENTRY_PTR_MASK     7 /* 111 */
-#define ENTRY_PTR_NORMAL   0 /* 000 */
-#define ENTRY_PTR_NO_VALUE 2 /* 010 */
-#define ENTRY_PTR_IS_ODD_KEY  1 /* XX1 : If it is a pointer to odd key address (must be 1). */
-#define ENTRY_PTR_IS_EVEN_KEY 4 /* 100 : If it is a pointer to even key address. */
+#define ENTRY_PTR_MASK        7 /* 111 */
+#define ENTRY_PTR_NORMAL      0 /* 000 : If a pointer to an entry with value. */
+#define ENTRY_PTR_IS_ODD_KEY  1 /* XX1 : If a pointer to odd key address (must be 1). */
+#define ENTRY_PTR_IS_EVEN_KEY 2 /* 010 : If a pointer to even key address. (must be 2 or 4). */ 
+#define ENTRY_PTR_NO_VALUE    4 /* 100 : If a pointer to an entry without value. */ 
 
 /* Returns 1 if the entry pointer is a pointer to a key, rather than to an
  * allocated entry. Returns 0 otherwise. */
 static inline int entryIsKey(const dictEntry *de) {
-    return ((uintptr_t)de & ENTRY_PTR_IS_ODD_KEY) || ((uintptr_t)de & ENTRY_PTR_IS_EVEN_KEY);
+    return ((uintptr_t)de & (ENTRY_PTR_IS_ODD_KEY | ENTRY_PTR_IS_EVEN_KEY));
 }
 
 /* Returns 1 if the pointer is actually a pointer to a dictEntry struct. Returns
@@ -327,8 +327,7 @@ static void rehashEntriesInBucketAtIndex(dict *d, uint64_t idx) {
             h = idx & DICTHT_SIZE_MASK(d->ht_size_exp[1]);
         }
         if (d->type->no_value) {
-            if (!d->ht_table[1][h]) 
-            {
+            if (!d->ht_table[1][h]) {
                 /* The destination bucket is empty, allowing the key to be stored 
                  * directly without allocating a dictEntry. If an old entry was 
                  * previously allocated, free its memory. */                
