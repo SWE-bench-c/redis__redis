@@ -5553,7 +5553,7 @@ void releaseInfoSectionDict(dict *sec) {
  * The resulting dictionary should be released with releaseInfoSectionDict. */
 dict *genInfoSectionDict(robj **argv, int argc, char **defaults, int *out_all, int *out_everything) {
     char *default_sections[] = {
-        "server", "clients", "memory", "persistence", "stats", "replication",
+        "server", "clients", "memory", "persistence", "stats", "replication", "threads",
         "cpu", "module_list", "errorstats", "cluster", "keyspace", "keysizes", NULL};
     if (!defaults)
         defaults = default_sections;
@@ -5704,14 +5704,6 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
             "total_watched_keys:%lu\r\n", watched_keys,
             "total_blocking_keys:%lu\r\n", blocking_keys,
             "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey));
-
-        if (server.io_threads_num > 1) {
-            info = sdscatprintf(info, "main_thread_clients:%ld\r\n",
-                server.io_threads_clients_num[IOTHREAD_MAIN_THREAD_ID] - listLength(server.slaves));
-            for (j = 1; j < server.io_threads_num; j++) {
-                info = sdscatprintf(info, "io_thread_%d_clients:%d\r\n", j, server.io_threads_clients_num[j]);
-            }
-        }
     }
 
     /* Memory */
@@ -6121,6 +6113,15 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
             (long)m_ru.ru_stime.tv_sec, (long)m_ru.ru_stime.tv_usec,
             (long)m_ru.ru_utime.tv_sec, (long)m_ru.ru_utime.tv_usec);
 #endif  /* RUSAGE_THREAD */
+    }
+
+    /* Threads */
+    if (all_sections || (dictFind(section_dict,"threads") != NULL)) {
+        if (sections++) info = sdscat(info,"\r\n");
+        info = sdscatprintf(info, "# Threads\r\n");
+        for (j = 0; j < server.io_threads_num; j++) {
+            info = sdscatprintf(info, "io_thread_%d:clients=%d\r\n", j, server.io_threads_clients_num[j]);
+        }
     }
 
     /* Modules */

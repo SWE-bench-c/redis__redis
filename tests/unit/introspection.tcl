@@ -925,30 +925,30 @@ test {CONFIG REWRITE handles alias config properly} {
 
 test {IO threads client number} {
     start_server {overrides {io-threads 2} tags {external:skip}} {
-        set iothread_clients [s io_thread_1_clients]
+        set iothread_clients [get_io_thread_clients 1]
         assert_equal $iothread_clients [s connected_clients]
-        assert_equal [s main_thread_clients] 0
+        assert_equal [get_io_thread_clients 0] 0
 
         r script debug yes ; # Transfer to main thread
-        assert_equal [s main_thread_clients] 1
-        assert_equal [s io_thread_1_clients] [expr $iothread_clients - 1]
+        assert_equal [get_io_thread_clients 0] 1
+        assert_equal [get_io_thread_clients 1] [expr $iothread_clients - 1]
 
-        set iothread_clients [s io_thread_1_clients]
+        set iothread_clients [get_io_thread_clients 1]
         set rd1 [redis_deferring_client]
         set rd2 [redis_deferring_client]
-        assert_equal [s io_thread_1_clients] [expr $iothread_clients + 2]
+        assert_equal [get_io_thread_clients 1] [expr $iothread_clients + 2]
         $rd1 close
         $rd2 close
         wait_for_condition 1000 10 {
-            [s io_thread_1_clients] eq $iothread_clients
+            [get_io_thread_clients 1] eq $iothread_clients
         } else {
             fail "Fail to close clients of io thread 1"
         }
-        assert_equal [s main_thread_clients] 1
+        assert_equal [get_io_thread_clients 0] 1
 
         r script debug no ; # Transfer to io thread
-        assert_equal [s main_thread_clients] 0
-        assert_equal [s io_thread_1_clients] [expr $iothread_clients + 1]
+        assert_equal [get_io_thread_clients 0] 0
+        assert_equal [get_io_thread_clients 1] [expr $iothread_clients + 1]
     }
 }
 
@@ -961,15 +961,15 @@ test {Clients are evenly distributed among io threads} {
             set rdclients($i) [redis_deferring_client]
         }
         for {set i 1} {$i <= 3} {incr i} {
-            assert_equal [s io_thread_${i}_clients] 3
+            assert_equal [get_io_thread_clients $i] 3
         }
 
         $rdclients(3) close
         $rdclients(4) close
         wait_for_condition 1000 10 {
-            [s io_thread_1_clients] eq 2 &&
-            [s io_thread_2_clients] eq 2 &&
-            [s io_thread_3_clients] eq 3
+            [get_io_thread_clients 1] eq 2 &&
+            [get_io_thread_clients 2] eq 2 &&
+            [get_io_thread_clients 3] eq 3
         } else {
             fail "Fail to close clients"
         }
@@ -977,7 +977,7 @@ test {Clients are evenly distributed among io threads} {
         set  $rdclients(3) [redis_deferring_client]
         set  $rdclients(4) [redis_deferring_client]
         for {set i 1} {$i <= 3} {incr i} {
-            assert_equal [s io_thread_${i}_clients] 3
+            assert_equal [get_io_thread_clients $i] 3
         }
     }
 }
