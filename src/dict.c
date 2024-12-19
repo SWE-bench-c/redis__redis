@@ -62,6 +62,7 @@ typedef struct {
 
 static void _dictExpandIfNeeded(dict *d);
 static void _dictShrinkIfNeeded(dict *d);
+static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx);
 static signed char _dictNextExp(unsigned long size);
 static int _dictInit(dict *d, dictType *type);
 static dictEntry *dictGetNext(const dictEntry *de);
@@ -509,6 +510,39 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
     return dictInsertAtPosition(d, key, position);
 }
 
+/* Low-level add function for non-existing keys:
+ * This function adds a new entry to the dictionary, assuming the key does not
+ * already exist.
+ * Parameters:
+ * - `dict *d`: Pointer to the dictionary structure.
+ * - `void *key`: Pointer to the key being added.
+ * - `const uint64_t hash`: hash of the key being added.
+ * Guarantees:
+ * - The key is assumed to be non-existing.
+ * Note:
+ * Ensure that the key's uniqueness is managed externally before calling this function. */
+dictEntry *dictAddNonExistsByHash(dict *d, void *key, const uint64_t hash) {
+    /* Get the position for the new key, it should never be NULL. */
+    unsigned long idx, table;
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
+
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
+
+    /* Expand the hash table if needed */
+    _dictExpandIfNeeded(d);
+
+    table = dictIsRehashing(d) ? 1 : 0;
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+    void *position = &d->ht_table[table][idx];
+    assert(position!=NULL);
+
+    /* Dup the key if necessary. */
+    if (d->type->keyDup) key = d->type->keyDup(d, key);
+
+    return dictInsertAtPosition(d, key, position);
+}
+
 /* Adds a key in the dict's hashtable at the position returned by a preceding
  * call to dictFindPositionForInsert. This is a low level function which allows
  * splitting dictAddRaw in two parts. Normally, dictAddRaw or dictAdd should be
@@ -609,17 +643,8 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     h = dictHashKey(d, key, d->useStoredKeyApi);
     idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
 
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* If we have a valid hash entry at `idx` in ht0, we perform
-             * rehash on the bucket at `idx` (being more CPU cache friendly) */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* If the hash entry is not in ht0, we rehash the buckets based
-             * on the rehashidx (not CPU cache friendly). */
-            _dictRehashStep(d);
-        }
-    }
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
 
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
@@ -735,32 +760,21 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
-dictEntry *dictFind(dict *d, const void *key)
-{
+dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
     dictEntry *he;
-    uint64_t h, idx, table;
+    uint64_t idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
 
-    h = dictHashKey(d, key, d->useStoredKeyApi);
-    idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
+    idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* If we have a valid hash entry at `idx` in ht0, we perform
-             * rehash on the bucket at `idx` (being more CPU cache friendly) */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* If the hash entry is not in ht0, we rehash the buckets based
-             * on the rehashidx (not CPU cache friendly). */
-            _dictRehashStep(d);
-        }
-    }
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
 
     for (table = 0; table <= 1; table++) {
         if (table == 0 && (long)idx < d->rehashidx) continue;
-        idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+        idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
 
         /* Prefetch the bucket at the calculated index */
         redis_prefetch_read(&d->ht_table[table][idx]);
@@ -780,6 +794,13 @@ dictEntry *dictFind(dict *d, const void *key)
         if (unlikely(!dictIsRehashing(d))) return NULL;
     }
     return NULL;
+}
+
+dictEntry *dictFind(dict *d, const void *key)
+{
+    if (dictSize(d) == 0) return NULL; /* dict is empty */
+    const uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
+    return dictFindByHash(d,key,hash);
 }
 
 void *dictFetchValue(dict *d, const void *key) {
@@ -1570,6 +1591,21 @@ static void _dictShrinkIfNeeded(dict *d)
     dictShrinkIfNeeded(d);
 }
 
+static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx) {
+    if ((!dictIsRehashing(d)) || (d->pauserehash != 0))
+        return;
+    /* rehashing not in progress if rehashidx == -1 */
+    if ((long)visitedIdx >= d->rehashidx && d->ht_table[0][visitedIdx]) {
+        /* If we have a valid hash entry at `idx` in ht0, we perform
+         * rehash on the bucket at `idx` (being more CPU cache friendly) */
+        _dictBucketRehash(d, visitedIdx);
+    } else {
+        /* If the hash entry is not in ht0, we rehash the buckets based
+         * on the rehashidx (not CPU cache friendly). */
+        dictRehash(d,1);
+    }
+}
+
 /* Our hash table capability is a power of two */
 static signed char _dictNextExp(unsigned long size)
 {
@@ -1590,17 +1626,8 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
     if (existing) *existing = NULL;
     idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
 
-    if (dictIsRehashing(d)) {
-        if ((long)idx >= d->rehashidx && d->ht_table[0][idx]) {
-            /* If we have a valid hash entry at `idx` in ht0, we perform
-             * rehash on the bucket at `idx` (being more CPU cache friendly) */
-            _dictBucketRehash(d, idx);
-        } else {
-            /* If the hash entry is not in ht0, we rehash the buckets based
-             * on the rehashidx (not CPU cache friendly). */
-            _dictRehashStep(d);
-        }
-    }
+    /* Rehash the hash table if needed */
+    _dictRehashStepIfNeeded(d,idx);
 
     /* Expand the hash table if needed */
     _dictExpandIfNeeded(d);
@@ -1628,6 +1655,7 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
     return bucket;
 }
 
+
 void dictEmpty(dict *d, void(callback)(dict*)) {
     /* Someone may be monitoring a dict that started rehashing, before
      * destroying the dict fake completion. */
@@ -1653,7 +1681,7 @@ uint64_t dictGetHash(dict *d, const void *key) {
  * the hash value should be provided using dictGetHash.
  * no string / key comparison is performed.
  * return value is a pointer to the dictEntry if found, or NULL if not found. */
-dictEntry *dictFindEntryByPtrAndHash(dict *d, const void *oldptr, uint64_t hash) {
+dictEntry *dictFindByHashAndPtr(dict *d, const void *oldptr, const uint64_t hash) {
     dictEntry *he;
     unsigned long idx, table;
 
@@ -1835,14 +1863,40 @@ char *stringFromLongLong(long long value) {
     return s;
 }
 
+char *stringFromSubstring(void) {
+#define LARGE_STRING_SIZE 10000
+#define MIN_STRING_SIZE 100
+#define MAX_STRING_SIZE 500
+    static char largeString[LARGE_STRING_SIZE + 1];
+    static int init = 0;
+    if (init == 0) {
+        /* Generate a large string */
+        for (size_t i = 0; i < LARGE_STRING_SIZE; i++) {
+            /* Random printable ASCII character (33 to 126) */
+            largeString[i] = 33 + (rand() % 94);
+        }
+        /* Null-terminate the large string */
+        largeString[LARGE_STRING_SIZE] = '\0';
+        init = 1;
+    }
+    /* Randomly choose a size between minSize and maxSize */
+    size_t substringSize = MIN_STRING_SIZE + (rand() % (MAX_STRING_SIZE - MIN_STRING_SIZE + 1));
+    size_t startIndex = rand() % (LARGE_STRING_SIZE - substringSize + 1);
+    /* Allocate memory for the substring (+1 for null terminator) */
+    char *s = zmalloc(substringSize + 1);
+    memcpy(s, largeString + startIndex, substringSize); // Copy the substring
+    s[substringSize] = '\0'; // Null-terminate the string
+    return s;
+}
+
 dictType BenchmarkDictType = {
-    hashCallback,
-    NULL,
-    NULL,
-    compareCallback,
-    freeCallback,
-    NULL,
-    NULL
+        hashCallback,
+        NULL,
+        NULL,
+        compareCallback,
+        freeCallback,
+        NULL,
+        NULL
 };
 
 #define start_benchmark() start = timeInMilliseconds()
@@ -1851,88 +1905,14 @@ dictType BenchmarkDictType = {
     printf(msg ": %ld items in %lld ms\n", count, elapsed); \
 } while(0)
 
-void dictBenchmark(long count) {
-    long j;
-    long long start, elapsed;
-    int retval;
-    dict *dict = dictCreate(&BenchmarkDictType);
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        retval = dictAdd(dict,stringFromLongLong(j),(void*)j);
-        assert(retval == DICT_OK);
-    } 
-    
-    end_benchmark("Inserting");
-    assert((long)dictSize(dict) == count);
-
-    /* Wait for rehashing. */
-    while (dictIsRehashing(dict)) {
-        dictRehashMicroseconds(dict,100*1000);
-    }
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        char *key = stringFromLongLong(j);
-        dictEntry *de = dictFind(dict,key);
-        assert(de != NULL);
-        zfree(key);
-    }
-    end_benchmark("Linear access of existing elements");
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        char *key = stringFromLongLong(j);
-        dictEntry *de = dictFind(dict,key);
-        assert(de != NULL);
-        zfree(key);
-    }
-    end_benchmark("Linear access of existing elements (2nd round)");
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        char *key = stringFromLongLong(rand() % count);
-        dictEntry *de = dictFind(dict,key);
-        assert(de != NULL);
-        zfree(key);
-    }
-    end_benchmark("Random access of existing elements");
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        dictEntry *de = dictGetRandomKey(dict);
-        assert(de != NULL);
-    }
-    end_benchmark("Accessing random keys");
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        char *key = stringFromLongLong(rand() % count);
-        key[0] = 'X';
-        dictEntry *de = dictFind(dict,key);
-        assert(de == NULL);
-        zfree(key);
-    }
-    end_benchmark("Accessing missing");
-
-    start_benchmark();
-    for (j = 0; j < count; j++) {
-        char *key = stringFromLongLong(j);
-        retval = dictDelete(dict,key);
-        assert(retval == DICT_OK);
-        key[0] += 17; /* Change first number to letter. */
-        retval = dictAdd(dict,key,(void*)j);
-        assert(retval == DICT_OK);
-    }
-    end_benchmark("Removing and adding");
-    dictRelease(dict);
-}
-
 /* ./redis-server test dict [<count> | --accurate] */
 int dictTest(int argc, char **argv, int flags) {
     long j;
+    long long start, elapsed;
     int retval;
     dict *d = dictCreate(&BenchmarkDictType);
+    dictEntry* de = NULL;
+    dictEntry* existing = NULL;
     long count = 0;
     unsigned long new_dict_size, current_dict_used, remain_keys;
     int accurate = (flags & REDIS_TEST_ACCURATE);
@@ -2072,12 +2052,166 @@ int dictTest(int argc, char **argv, int flags) {
         dictEmpty(d, NULL);
         dictSetResizeEnabled(DICT_RESIZE_ENABLE);
     }
+    srand(12345);
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        /* Create a dynamically allocated substring */
+        char *key = stringFromSubstring();
+
+        /* Insert the range directly from the large string */
+        de = dictAddRaw(d, key, &existing);
+        assert(de != NULL || existing != NULL);
+        /* If key already exists NULL is returned so we need to free the temp key string */
+        if (de == NULL) zfree(key);
+    }
+    end_benchmark("Inserting random substrings (100-500B) from large string with symbols");
+    assert((long)dictSize(d) <= count);
+    dictEmpty(d, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        retval = dictAdd(d,stringFromLongLong(j),(void*)j);
+        assert(retval == DICT_OK);
+    }
+    end_benchmark("Inserting via dictAdd() non existing");
+    assert((long)dictSize(d) == count);
+
+    dictEmpty(d, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        de = dictAddRaw(d,stringFromLongLong(j),NULL);
+        assert(de != NULL);
+    }
+    end_benchmark("Inserting via dictAddRaw() non existing");
+    assert((long)dictSize(d) == count);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        void *key = stringFromLongLong(j);
+        de = dictAddRaw(d,key,&existing);
+        assert(existing != NULL);
+        zfree(key);
+    }
+    end_benchmark("Inserting via dictAddRaw() existing (no insertion)");
+    assert((long)dictSize(d) == count);
+
+    dictEmpty(d, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        void *key = stringFromLongLong(j);
+        const uint64_t hash = dictGetHash(d, key);
+        de = dictAddNonExistsByHash(d,key,hash);
+        assert(de != NULL);
+    }
+    end_benchmark("Inserting via dictAddNonExistsByHash() non existing");
+    assert((long)dictSize(d) == count);
+
+    /* Wait for rehashing. */
+    while (dictIsRehashing(d)) {
+        dictRehashMicroseconds(d,100*1000);
+    }
+
+    dictEmpty(d, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        /* Create a key */
+        void *key = stringFromLongLong(j);
+
+        /* Check if the key exists */
+        dictEntry *entry = dictFind(d, key);
+        assert(entry == NULL);
+
+        /* Add the key */
+        dictEntry *de = dictAddRaw(d, key, NULL);
+        assert(de != NULL);
+    }
+    end_benchmark("Find() and inserting via dictFind()+dictAddRaw() non existing");
+
+    dictEmpty(d, NULL);
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        /* Create a key */
+        void *key = stringFromLongLong(j);
+        uint64_t hash = dictGetHash(d, key);
+
+        /* Check if the key exists */
+        dictEntry *entry = dictFindByHash(d, key, hash);
+        assert(entry == NULL);
+        de = dictAddNonExistsByHash(d, key, hash);
+        assert(de != NULL);
+    }
+    end_benchmark("Find() and inserting via dictGetHash()+dictFindByHash()+dictAddNonExistsByHash() non existing");
+    assert((long)dictSize(d) == count);
+
+    /* Wait for rehashing. */
+    while (dictIsRehashing(d)) {
+        dictRehashMicroseconds(d,100*1000);
+    }
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        char *key = stringFromLongLong(j);
+        dictEntry *de = dictFind(d,key);
+        assert(de != NULL);
+        zfree(key);
+    }
+    end_benchmark("Linear access of existing elements");
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        char *key = stringFromLongLong(j);
+        dictEntry *de = dictFind(d,key);
+        assert(de != NULL);
+        zfree(key);
+    }
+    end_benchmark("Linear access of existing elements (2nd round)");
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        char *key = stringFromLongLong(rand() % count);
+        dictEntry *de = dictFind(d,key);
+        assert(de != NULL);
+        zfree(key);
+    }
+    end_benchmark("Random access of existing elements");
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        dictEntry *de = dictGetRandomKey(d);
+        assert(de != NULL);
+    }
+    end_benchmark("Accessing random keys");
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        char *key = stringFromLongLong(rand() % count);
+        key[0] = 'X';
+        dictEntry *de = dictFind(d,key);
+        assert(de == NULL);
+        zfree(key);
+    }
+    end_benchmark("Accessing missing");
+
+    start_benchmark();
+    for (j = 0; j < count; j++) {
+        char *key = stringFromLongLong(j);
+        retval = dictDelete(d,key);
+        assert(retval == DICT_OK);
+        key[0] += 17; /* Change first number to letter. */
+        retval = dictAdd(d,key,(void*)j);
+        assert(retval == DICT_OK);
+    }
+    end_benchmark("Removing and adding");
     dictRelease(d);
 
     TEST("Use dict without values (no_value=1)") {
         dictType dt = BenchmarkDictType;
         dt.no_value = 1;
-        
+
         /* Allocate array of size count and fill it with keys (stringFromLongLong(j) */
         char **lookupKeys = zmalloc(sizeof(char*) * count);
         for (long j = 0; j < count; j++)
@@ -2087,32 +2221,28 @@ int dictTest(int argc, char **argv, int flags) {
         /* Add keys without values. */
         dict *d = dictCreate(&dt);
         for (j = 0; j < count; j++) {
-            retval = dictAdd(d,lookupKeys[j],NULL);            
+            retval = dictAdd(d,lookupKeys[j],NULL);
             assert(retval == DICT_OK);
         }
-        
+
         /* Now, we should be able to find the keys. */
         for (j = 0; j < count; j++) {
             dictEntry *de = dictFind(d,lookupKeys[j]);
             assert(de != NULL);
         }
-        
+
         /* Find non exists keys. */
         for (j = 0; j < count; j++) {
             /* Temporarily override first char of key */
-            char tmp = lookupKeys[j][0];  
+            char tmp = lookupKeys[j][0];
             lookupKeys[j][0] = 'X';
             dictEntry *de = dictFind(d,lookupKeys[j]);
             lookupKeys[j][0] = tmp;
             assert(de == NULL);
-        }     
-        
+        }
+
         dictRelease(d);
         zfree(lookupKeys);
-    }
-
-    TEST("test - dict benchmark") {
-        dictBenchmark(count);
     }
 
     return 0;
