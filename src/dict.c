@@ -1864,9 +1864,9 @@ char *stringFromLongLong(long long value) {
 }
 
 char *stringFromSubstring(void) {
-#define LARGE_STRING_SIZE 10000
-#define MIN_STRING_SIZE 100
-#define MAX_STRING_SIZE 500
+    #define LARGE_STRING_SIZE 10000
+    #define MIN_STRING_SIZE 100
+    #define MAX_STRING_SIZE 500
     static char largeString[LARGE_STRING_SIZE + 1];
     static int init = 0;
     if (init == 0) {
@@ -1890,13 +1890,13 @@ char *stringFromSubstring(void) {
 }
 
 dictType BenchmarkDictType = {
-        hashCallback,
-        NULL,
-        NULL,
-        compareCallback,
-        freeCallback,
-        NULL,
-        NULL
+    hashCallback,
+    NULL,
+    NULL,
+    compareCallback,
+    freeCallback,
+    NULL,
+    NULL
 };
 
 #define start_benchmark() start = timeInMilliseconds()
