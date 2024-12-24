@@ -789,8 +789,11 @@ int clientsCronResizeQueryBuffer(client *c) {
 int clientsCronFreeArgvIfIdle(client *c) {
     /* If the arguments have already been freed or are still in use, exit ASAP. */
     if (!c->argv || c->argc) return 0;
+
+    /* Free argv if the client has been idle for more than 2 seconds or if argv
+     * size is too large. */
     time_t idletime = server.unixtime - c->lastinteraction;
-    if (idletime > 2) {
+    if (idletime > 2 || c->argv_len > 128) {
         c->argv_len = 0;
         zfree(c->argv);
         c->argv = NULL;
