@@ -2433,7 +2433,7 @@ int processMultibulkBuffer(client *c) {
          * Create new argv in the following cases:
          * 1) When the requested size is greater than the current size.
          * 2) When the requested size is less than the current size, because
-         *    we always allocate argy gradually with a maximum size of 1024,
+         *    we always allocate argv gradually with a maximum size of 1024,
          *    Therefore, if argv_len exceeds this limit, we always reallocate. */
         if (unlikely(c->multibulklen > c->argv_len || c->argv_len > 1024)) {
             zfree(c->argv);
