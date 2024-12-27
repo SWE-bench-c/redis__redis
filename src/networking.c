@@ -121,7 +121,7 @@ copydata:
 }
 
 void tryFreeArgvObjectsToPool(client *c, robj *obj) {
-    if (obj->refcount > 1 ||
+    if (!c || obj->refcount > 1 ||
         c->argv_obj_pool.size == CLIENT_ARGV_OBJECT_POOL_SIZE)
     {
         decrRefCount(obj);

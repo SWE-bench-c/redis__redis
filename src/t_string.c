@@ -281,22 +281,22 @@ void setCommand(client *c) {
         return;
     }
 
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    c->argv[2] = tryObjectEncoding(c->argv[2], c);
     setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
 }
 
 void setnxCommand(client *c) {
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    c->argv[2] = tryObjectEncoding(c->argv[2], c);
     setGenericCommand(c,OBJ_SET_NX,c->argv[1],c->argv[2],NULL,0,shared.cone,shared.czero);
 }
 
 void setexCommand(client *c) {
-    c->argv[3] = tryObjectEncoding(c->argv[3]);
+    c->argv[3] = tryObjectEncoding(c->argv[3], c);
     setGenericCommand(c,OBJ_EX,c->argv[1],c->argv[3],c->argv[2],UNIT_SECONDS,NULL,NULL);
 }
 
 void psetexCommand(client *c) {
-    c->argv[3] = tryObjectEncoding(c->argv[3]);
+    c->argv[3] = tryObjectEncoding(c->argv[3], c);
     setGenericCommand(c,OBJ_PX,c->argv[1],c->argv[3],c->argv[2],UNIT_MILLISECONDS,NULL,NULL);
 }
 
@@ -410,7 +410,7 @@ void getdelCommand(client *c) {
 
 void getsetCommand(client *c) {
     if (getGenericCommand(c) == C_ERR) return;
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    c->argv[2] = tryObjectEncoding(c->argv[2], c);
     setKey(c,c->db,c->argv[1],c->argv[2],0);
     notifyKeyspaceEvent(NOTIFY_STRING,"set",c->argv[1],c->db->id);
     server.dirty++;
@@ -554,7 +554,7 @@ void msetGenericCommand(client *c, int nx) {
 
     int setkey_flags = nx ? SETKEY_DOESNT_EXIST : 0;
     for (j = 1; j < c->argc; j += 2) {
-        c->argv[j+1] = tryObjectEncoding(c->argv[j+1]);
+        c->argv[j+1] = tryObjectEncoding(c->argv[j+1], c);
         setKey(c, c->db, c->argv[j], c->argv[j + 1], setkey_flags);
         notifyKeyspaceEvent(NOTIFY_STRING,"set",c->argv[j],c->db->id);
         /* In MSETNX, It could be that we're overriding the same key, we can't be sure it doesn't exist. */
@@ -678,7 +678,7 @@ void appendCommand(client *c) {
     o = lookupKeyWriteWithDictEntry(c->db,c->argv[1],&de);
     if (o == NULL) {
         /* Create the key */
-        c->argv[2] = tryObjectEncoding(c->argv[2]);
+        c->argv[2] = tryObjectEncoding(c->argv[2], c);
         dbAdd(c->db,c->argv[1],c->argv[2]);
         incrRefCount(c->argv[2]);
         append_len = totlen = stringObjectLen(c->argv[2]);

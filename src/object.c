@@ -604,7 +604,7 @@ void trimStringObjectIfNeeded(robj *o, int trim_small_values) {
 }
 
 /* Try to encode a string object in order to save space */
-robj *tryObjectEncodingEx(robj *o, int try_trim) {
+robj *tryObjectEncodingEx(robj *o, int try_trim, client *c) {
     long value;
     sds s = o->ptr;
     size_t len;
@@ -639,7 +639,7 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
             value >= 0 &&
             value < OBJ_SHARED_INTEGERS)
         {
-            decrRefCount(o);
+            tryFreeArgvObjectsToPool(c, o);
             return shared.integers[value];
         } else {
             if (o->encoding == OBJ_ENCODING_RAW) {
@@ -648,7 +648,7 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
                 o->ptr = (void*) value;
                 return o;
             } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
-                decrRefCount(o);
+                tryFreeArgvObjectsToPool(c, o);
                 return createStringObjectFromLongLongForValue(value);
             }
         }
@@ -661,9 +661,13 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT) {
         robj *emb;
 
-        if (o->encoding == OBJ_ENCODING_EMBSTR) return o;
+        if (o->encoding == OBJ_ENCODING_EMBSTR &&
+            (!c || sdsalloc(s) > CLIENT_ARGV_OBJECT_SIZE_LIMIT))
+        {
+            return o;
+        }
         emb = createEmbeddedStringObject(s,sdslen(s));
-        decrRefCount(o);
+        tryFreeArgvObjectsToPool(c, o);
         return emb;
     }
 
@@ -676,8 +680,8 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
     return o;
 }
 
-robj *tryObjectEncoding(robj *o) {
-    return tryObjectEncodingEx(o, 1);
+robj *tryObjectEncoding(robj *o, client *c) {
+    return tryObjectEncodingEx(o, 1, c);
 }
 
 size_t getObjectLength(robj *o) {
