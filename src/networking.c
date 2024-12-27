@@ -70,11 +70,11 @@ size_t getStringObjectLen(robj *o) {
 }
 
 void initClientArgvObjectPool(client *c) {
-    c->argv_obj_pool.size = CLIENT_ARGV_OBJECT_POOL_SIZE;
     c->argv_obj_pool.alloc_index = 0;
     c->argv_obj_pool.free_index = 0;
+    c->argv_obj_pool.size = 1; /* At least one argv is needed. */
     for (int i = 0; i < CLIENT_ARGV_OBJECT_POOL_SIZE; i++) {
-        c->argv_obj_pool.objects[i] =
+        c->argv_obj_pool.objects[i] = i != 0 ? NULL :
             createStringObject(SDS_NOINIT, CLIENT_ARGV_OBJECT_SIZE_LIMIT);
     }
     size_t size = zmalloc_size(c->argv_obj_pool.objects[0]);
