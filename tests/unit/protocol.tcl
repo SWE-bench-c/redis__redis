@@ -184,6 +184,15 @@ start_server {tags {"protocol network"}} {
         r object encoding crlf
         assert_equal [r rawread 12] "\$6\r\nembstr\r\n"
 
+        # normal sds (raw string encoding) with 45 'a'
+        set rawstr [string repeat "a" 45]
+        r set crlf $rawstr
+        assert_equal [r rawread 5] "+OK\r\n"
+        r get crlf
+        assert_equal [r rawread 52] "\$45\r\n$rawstr\r\n"
+        r object encoding crlf
+        assert_equal [r rawread 9] "\$3\r\nraw\r\n"
+
         r del crlf
         assert_equal [r rawread 4] ":1\r\n"
     }
