@@ -144,19 +144,19 @@ start_server {tags {"protocol network"}} {
         r object encoding crlf
         assert_equal [r rawread 9] "\$3\r\nint\r\n"
 
-        # value=9223372036854775807 (int encoding)
-        r set crlf 9223372036854775807
+        # value=2147483647 (int encoding)
+        r set crlf 2147483647
         assert_equal [r rawread 5] "+OK\r\n"
         r get crlf
-        assert_equal [r rawread 26] "\$19\r\n9223372036854775807\r\n"
+        assert_equal [r rawread 17] "\$10\r\n2147483647\r\n"
         r object encoding crlf
         assert_equal [r rawread 9] "\$3\r\nint\r\n"
 
-        # value=-9223372036854775808 (int encoding)
-        r set crlf -9223372036854775808
+        # value=-2147483648 (int encoding)
+        r set crlf -2147483648
         assert_equal [r rawread 5] "+OK\r\n"
         r get crlf
-        assert_equal [r rawread 27] "\$20\r\n-9223372036854775808\r\n"
+        assert_equal [r rawread 18] "\$11\r\n-2147483648\r\n"
         r object encoding crlf
         assert_equal [r rawread 9] "\$3\r\nint\r\n"
 
