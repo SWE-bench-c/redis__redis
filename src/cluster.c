@@ -317,7 +317,7 @@ migrateCachedSocket* migrateGetSocket(client *c, robj *host, robj *port, long ti
     }
 
     /* Create the connection */
-    conn = connCreate(connTypeOfCluster());
+    conn = connCreate(server.el, connTypeOfCluster());
     if (connBlockingConnect(conn, host->ptr, atoi(port->ptr), timeout)
         != C_OK) {
         addReplyError(c,"-IOERR error or timeout connecting to the client");
@@ -1077,7 +1077,7 @@ void clusterCommand(client *c) {
  *
  * CLUSTER_REDIR_DOWN_STATE and CLUSTER_REDIR_DOWN_RO_STATE if the cluster is
  * down but the user attempts to execute a command that addresses one or more keys. */
-clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, int argc, int *hashslot, uint64_t cmd_flags, int *error_code) {
+clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, int argc, int16_t *hashslot, uint64_t cmd_flags, int *error_code) {
     clusterNode *myself = getMyClusterNode();
     clusterNode *n = NULL;
     robj *firstkey = NULL;

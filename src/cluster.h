@@ -133,7 +133,7 @@ long long clusterNodeReplOffset(clusterNode *node);
 clusterNode *clusterLookupNode(const char *name, int length);
 
 /* functions with shared implementations */
-clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, int argc, int *hashslot, uint64_t cmd_flags, int *error_code);
+clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, int argc, int16_t *hashslot, uint64_t cmd_flags, int *error_code);
 int clusterRedirectBlockedClientIfNeeded(client *c);
 void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_code);
 void migrateCloseTimedoutSockets(void);
