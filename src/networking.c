@@ -1070,6 +1070,8 @@ void addReplyBulk(client *c, robj *obj) {
     if (prepareClientToWrite(c) != C_OK) return;
 
     if (sdsEncodedObject(obj)) {
+        /* Prefetch the memory for the `flags` and potential header */
+        redis_prefetch_read((const sds)(obj->ptr) - 1);
         const size_t len = sdslen(obj->ptr);
         _addReplyLongLongBulk(c, len);
         _addReplyToBufferOrList(c,obj->ptr,len);
