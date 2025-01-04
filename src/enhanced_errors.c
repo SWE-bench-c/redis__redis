@@ -10,10 +10,7 @@
 const RedisEnhancedError ERR_MEMORY_LIMIT = {
     .message = "Memory limit exceeded",
     .details = "The server has reached its memory limit and cannot allocate more memory",
-    .suggestion = "Consider:
-1. Increasing maxmemory setting
-2. Enabling maxmemory-policy for automatic memory management
-3. Checking for memory leaks in your application",
+    .suggestion = "Consider:\n1. Increasing maxmemory setting\n2. Enabling maxmemory-policy for automatic memory management\n3. Checking for memory leaks in your application",
     .documentation = "https://redis.io/topics/memory-optimization",
     .category = ERR_CATEGORY_MEMORY
 };
