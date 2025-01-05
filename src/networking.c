@@ -26,6 +26,10 @@ static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 char *getClientSockname(client *c);
 static inline int clientTypeIsSlave(client *c);
+static inline int _clientHasPendingRepliesSlave(client *c);
+static inline int _clientHasPendingRepliesNonSlave(client *c);
+static inline int _writeToClientNonSlave(client *c, ssize_t *nwritten);
+static inline int _writeToClientSlave(client *c, ssize_t *nwritten);
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
 __thread sds thread_reusable_qb = NULL;
 __thread int thread_reusable_qb_used = 0; /* Avoid multiple clients using reusable query
@@ -1294,26 +1298,32 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
     ((replBufBlock *)listNodeValue(dst->ref_repl_buf_node))->refcount++;
 }
 
+static inline int _clientHasPendingRepliesNonSlave(client *c){
+    return c->bufpos || listLength(c->reply);
+}
+
+static inline int _clientHasPendingRepliesSlave(client *c){
+    /* Replicas use global shared replication buffer instead of
+     * private output buffer. */
+    serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
+    if (c->ref_repl_buf_node == NULL) return 0;
+
+    /* If the last replication buffer block content is totally sent,
+        * we have nothing to send. */
+    listNode *ln = listLast(server.repl_buffer_blocks);
+    replBufBlock *tail = listNodeValue(ln);
+    if (ln == c->ref_repl_buf_node &&
+        c->ref_block_pos == tail->used) return 0;
+    return 1;
+}
+
 /* Return true if the specified client has pending reply buffers to write to
  * the socket. */
 int clientHasPendingReplies(client *c) {
     if (unlikely(clientTypeIsSlave(c))) {
-        /* Replicas use global shared replication buffer instead of
-         * private output buffer. */
-        serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
-        if (c->ref_repl_buf_node == NULL) return 0;
-
-        /* If the last replication buffer block content is totally sent,
-         * we have nothing to send. */
-        listNode *ln = listLast(server.repl_buffer_blocks);
-        replBufBlock *tail = listNodeValue(ln);
-        if (ln == c->ref_repl_buf_node &&
-            c->ref_block_pos == tail->used) return 0;
-
-        return 1;
-    } else {
-        return c->bufpos || listLength(c->reply);
+        return _clientHasPendingRepliesSlave(c);
     }
+    return _clientHasPendingRepliesNonSlave(c);
 }
 
 void clientAcceptHandler(connection *conn) {
@@ -2002,38 +2012,8 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
     return C_OK;
 }
 
-/* This function does actual writing output buffers to different types of
- * clients, it is called by writeToClient.
- * If we write successfully, it returns C_OK, otherwise, C_ERR is returned,
- * and 'nwritten' is an output parameter, it means how many bytes server write
- * to client. */
-int _writeToClient(client *c, ssize_t *nwritten) {
+static inline int _writeToClientNonSlave(client *c, ssize_t *nwritten) {
     *nwritten = 0;
-    if (unlikely(clientTypeIsSlave(c))) {
-        serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
-
-        replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
-        serverAssert(o->used >= c->ref_block_pos);
-        /* Send current block if it is not fully sent. */
-        if (o->used > c->ref_block_pos) {
-            *nwritten = connWrite(c->conn, o->buf+c->ref_block_pos,
-                                  o->used-c->ref_block_pos);
-            if (*nwritten <= 0) return C_ERR;
-            c->ref_block_pos += *nwritten;
-        }
-
-        /* If we fully sent the object on head, go to the next one. */
-        listNode *next = listNextNode(c->ref_repl_buf_node);
-        if (next && c->ref_block_pos == o->used) {
-            o->refcount--;
-            ((replBufBlock *)(listNodeValue(next)))->refcount++;
-            c->ref_repl_buf_node = next;
-            c->ref_block_pos = 0;
-            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
-        }
-        return C_OK;
-    }
-
     /* When the reply list is not empty, it's better to use writev to save us some
      * system calls and TCP packets. */
     if (listLength(c->reply) > 0) {
@@ -2055,8 +2035,31 @@ int _writeToClient(client *c, ssize_t *nwritten) {
             c->bufpos = 0;
             c->sentlen = 0;
         }
-    } 
+    }
+    return C_OK;
+}
 
+static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
+    *nwritten = 0;
+    serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
+    replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
+    serverAssert(o->used >= c->ref_block_pos);
+    /* Send current block if it is not fully sent. */
+    if (o->used > c->ref_block_pos) {
+        *nwritten = connWrite(c->conn, o->buf+c->ref_block_pos,
+                                o->used-c->ref_block_pos);
+        if (*nwritten <= 0) return C_ERR;
+        c->ref_block_pos += *nwritten;
+    }
+    /* If we fully sent the object on head, go to the next one. */
+    listNode *next = listNextNode(c->ref_repl_buf_node);
+    if (next && c->ref_block_pos == o->used) {
+        o->refcount--;
+        ((replBufBlock *)(listNodeValue(next)))->refcount++;
+        c->ref_repl_buf_node = next;
+        c->ref_block_pos = 0;
+        incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
+    }
     return C_OK;
 }
 
@@ -2077,32 +2080,53 @@ int writeToClient(client *c, int handler_installed) {
     }
 
     ssize_t nwritten = 0, totwritten = 0;
+    const int is_slave = clientTypeIsSlave(c);
 
-    while(clientHasPendingReplies(c)) {
-        int ret = _writeToClient(c, &nwritten);
-        if (ret == C_ERR) break;
-        totwritten += nwritten;
-        /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
-         * bytes, in a single threaded server it's a good idea to serve
-         * other clients as well, even if a very large request comes from
-         * super fast link that is always able to accept data (in real world
-         * scenario think about 'KEYS *' against the loopback interface).
-         *
-         * However if we are over the maxmemory limit we ignore that and
-         * just deliver as much data as it is possible to deliver.
-         *
-         * Moreover, we also send as much as possible if the client is
-         * a slave or a monitor (otherwise, on high-speed traffic, the
-         * replication/output buffer will grow indefinitely) */
-        if (totwritten > NET_MAX_WRITES_PER_EVENT &&
-            (server.maxmemory == 0 ||
-             zmalloc_used_memory() < server.maxmemory) &&
-            !(c->flags & CLIENT_SLAVE)) break;
-    }
-
-    if (unlikely(clientTypeIsSlave(c))) {
+    if (unlikely(is_slave)) {
+        while(_clientHasPendingRepliesSlave(c)) {
+            int ret = _writeToClientSlave(c, &nwritten);
+            if (ret == C_ERR) break;
+            totwritten += nwritten;
+            /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
+            * bytes, in a single threaded server it's a good idea to serve
+            * other clients as well, even if a very large request comes from
+            * super fast link that is always able to accept data (in real world
+            * scenario think about 'KEYS *' against the loopback interface).
+            *
+            * However if we are over the maxmemory limit we ignore that and
+            * just deliver as much data as it is possible to deliver.
+            *
+            * Moreover, we also send as much as possible if the client is
+            * a slave or a monitor (otherwise, on high-speed traffic, the
+            * replication/output buffer will grow indefinitely) */
+            if (totwritten > NET_MAX_WRITES_PER_EVENT &&
+                (server.maxmemory == 0 ||
+                zmalloc_used_memory() < server.maxmemory) &&
+                !(c->flags & CLIENT_SLAVE)) break;
+        }
         atomicIncr(server.stat_net_repl_output_bytes, totwritten);
     } else {
+        while(_clientHasPendingRepliesNonSlave(c)) {
+            int ret = _writeToClientNonSlave(c, &nwritten);
+            if (ret == C_ERR) break;
+            totwritten += nwritten;
+            /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
+            * bytes, in a single threaded server it's a good idea to serve
+            * other clients as well, even if a very large request comes from
+            * super fast link that is always able to accept data (in real world
+            * scenario think about 'KEYS *' against the loopback interface).
+            *
+            * However if we are over the maxmemory limit we ignore that and
+            * just deliver as much data as it is possible to deliver.
+            *
+            * Moreover, we also send as much as possible if the client is
+            * a slave or a monitor (otherwise, on high-speed traffic, the
+            * replication/output buffer will grow indefinitely) */
+            if (totwritten > NET_MAX_WRITES_PER_EVENT &&
+                (server.maxmemory == 0 ||
+                zmalloc_used_memory() < server.maxmemory) &&
+                !(c->flags & CLIENT_SLAVE)) break;
+        }
         atomicIncr(server.stat_net_output_bytes, totwritten);
     }
 
