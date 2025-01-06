@@ -248,3 +248,14 @@ start_server {tags {"regression"}} {
         $rd close
     }
 }
+
+start_server {tags {"regression"}} {
+    test "Regression for a crash with cron release of client arguments" {
+        r write "*3\r\n"
+        r flush
+        after 3000
+        r write "\$3\r\nSET\r\n\$3\r\nkey\r\n\$1\r\n0\r\n"
+        r flush
+        r read
+    } {OK}
+}
