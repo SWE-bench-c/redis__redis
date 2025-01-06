@@ -2769,7 +2769,6 @@ int processInputBuffer(client *c) {
 
         /* Multibulk processing could see a <= 0 length. */
         if (c->argc == 0) {
-            freeClientArgvInternal(c, 0);
             c->reqtype = 0;
             c->multibulklen = 0;
             c->bulklen = -1;
