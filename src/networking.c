@@ -2508,8 +2508,8 @@ int processMultibulkBuffer(client *c) {
         } else {
             /* Check if we have space in argv, grow if needed */
             if (c->argc >= c->argv_len) {
-                c->argv_len = c->argv_len > 0 ? c->argv_len*2 : 1; /* argv_len might be 0 if argv was
-                                                                    * released due to client timeout */
+                c->argv_len = c->argv_len > 0 ? c->argv_len*2 : 1; /* argv_len might be 0 if argv was released
+                                                                    * due to client being idle for 2 seconds. */
                 c->argv_len = min(c->argv_len < INT_MAX/2 ? c->argv_len : INT_MAX, c->argc+c->multibulklen);
                 c->argv = zrealloc(c->argv, sizeof(robj*)*c->argv_len);
             }
