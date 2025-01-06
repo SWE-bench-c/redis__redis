@@ -2508,7 +2508,9 @@ int processMultibulkBuffer(client *c) {
         } else {
             /* Check if we have space in argv, grow if needed */
             if (c->argc >= c->argv_len) {
-                c->argv_len = min(c->argv_len < INT_MAX/2 ? c->argv_len*2 : INT_MAX, c->argc+c->multibulklen);
+                c->argv_len = c->argv_len > 0 ? c->argv_len*2 : 1; /* argv_len might be 0 if argv was
+                                                                    * released due to client timeout */
+                c->argv_len = min(c->argv_len < INT_MAX/2 ? c->argv_len : INT_MAX, c->argc+c->multibulklen);
                 c->argv = zrealloc(c->argv, sizeof(robj*)*c->argv_len);
             }
 
@@ -3996,7 +3998,7 @@ void replaceClientCommandVector(client *c, int argc, robj **argv) {
     retainOriginalCommandVector(c);
     freeClientArgv(c);
     c->argv = argv;
-    c->argc = argc;
+    c->argc = c->argv_len = argc;
     c->argv_len_sum = 0;
     for (j = 0; j < c->argc; j++)
         if (c->argv[j])
