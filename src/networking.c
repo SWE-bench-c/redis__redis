@@ -2012,6 +2012,11 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
     return C_OK;
 }
 
+/* This function does actual writing output buffers for non slave client types,
+ * it is called by writeToClient.
+ * If we write successfully, it returns C_OK, otherwise, C_ERR is returned,
+ * and 'nwritten' is an output parameter, it means how many bytes server write
+ * to client. */
 static inline int _writeToClientNonSlave(client *c, ssize_t *nwritten) {
     *nwritten = 0;
     /* When the reply list is not empty, it's better to use writev to save us some
@@ -2039,6 +2044,11 @@ static inline int _writeToClientNonSlave(client *c, ssize_t *nwritten) {
     return C_OK;
 }
 
+/* This function does actual writing output buffers for slave client types,
+ * it is called by writeToClient.
+ * If we write successfully, it returns C_OK, otherwise, C_ERR is returned,
+ * and 'nwritten' is an output parameter, it means how many bytes server write
+ * to client. */
 static inline int _writeToClientSlave(client *c, ssize_t *nwritten) {
     *nwritten = 0;
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
