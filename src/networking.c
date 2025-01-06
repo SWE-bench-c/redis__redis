@@ -1453,7 +1453,7 @@ void freeClientOriginalArgv(client *c) {
 static inline void freeClientArgvInternal(client *c, int free_argv) {
     int j;
     for (j = 0; j < c->argc; j++)
-        decrRefCount(c->argv[j]);
+        tryFreeObjectToArgvOjectPool(c->argv[j]);
     c->argc = 0;
     c->cmd = NULL;
     c->iolookedcmd = NULL;
@@ -2528,8 +2528,9 @@ int processMultibulkBuffer(client *c) {
                 c->querybuf = sdsnewlen(SDS_NOINIT,c->bulklen+2);
                 sdsclear(c->querybuf);
             } else {
-                c->argv[c->argc++] =
-                    createStringObject(c->querybuf+c->qb_pos,c->bulklen);
+                c->argv[c->argc++] = c->running_tid == IOTHREAD_MAIN_THREAD_ID ?
+                    tryAllocObjectFromArgvOjectPool(c->querybuf+c->qb_pos, c->bulklen) :
+                    createStringObject(c->querybuf+c->qb_pos, c->bulklen);
                 c->argv_len_sum += c->bulklen;
                 c->qb_pos += c->bulklen+2;
             }
