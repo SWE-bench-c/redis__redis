@@ -729,14 +729,14 @@ clientArgvOjectPool *createClientArgvObjectPools(void) {
     for (int i = 0; i < CLIENT_ARGV_OBJECT_POOL_NUM; i++) {
         clientArgvOjectPool *pool = pools + i;
         pool->object_size = 4 + i*8;
-        pool->object_queue = zcalloc(sizeof(robj*)*CLIENT_ARGV_OBJECT_POOL_CAPACITY);
-        for (int i = 0; i < CLIENT_ARGV_OBJECT_POOL_INIT_COUNT; i++) {
+        pool->count = CLIENT_ARGV_OBJECT_POOL_INIT_COUNT;
+        pool->capacity = CLIENT_ARGV_OBJECT_POOL_CAPACITY;
+        pool->object_queue = zcalloc(sizeof(robj*) * pool->capacity);
+        for (int i = 0; i < pool->count; i++) {
             pool->object_queue[i] = createStringObject(SDS_NOINIT, pool->object_size);
         }
         pool->head = 0;
-        pool->tail = CLIENT_ARGV_OBJECT_POOL_INIT_COUNT;
-        pool->count = CLIENT_ARGV_OBJECT_POOL_INIT_COUNT;
-        pool->capacity = CLIENT_ARGV_OBJECT_POOL_CAPACITY;
+        pool->tail = pool->count % pool->capacity;
     }
     return pools;
 }
