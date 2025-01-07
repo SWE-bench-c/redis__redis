@@ -1193,12 +1193,11 @@ typedef struct {
 #endif
 
 typedef struct {
-    int alloc_size;       /* Number of allocated objects. */
-    int alloc_index;      /* Index of the next slot to get an allocated object. */
-    robj **alloc_queue;   /* Queue of allocated objects. */
-    int free_size;        /* Number of freeing objects. */
-    int free_index;       /* Index of the next slot to store a freeing object. */
-    robj **free_queue;    /* Queue of freeing objects. */
+    int head;             /* Index of the getting object in pool. */
+    int tail;             /* Index of the putting object in pool. */
+    int count;            /* Number of objects in pool. */
+    int capacity;         /* Capacity of the pool. */
+    robj **object_queue;  /* Queue of objects. */
     int object_size;      /* Size of the object in this pool. */
 } clientArgvOjectPool;
 
