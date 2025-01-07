@@ -2090,29 +2090,20 @@ int writeToClient(client *c, int handler_installed) {
     const int is_slave = clientTypeIsSlave(c);
 
     if (unlikely(is_slave)) {
+        /* We send as much as possible if the client is
+         * a slave (otherwise, on high-speed traffic, the
+         * replication buffer will grow indefinitely) */
         while(_clientHasPendingRepliesSlave(c)) {
             int ret = _writeToClientSlave(c, &nwritten);
             if (ret == C_ERR) break;
             totwritten += nwritten;
-            /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
-            * bytes, in a single threaded server it's a good idea to serve
-            * other clients as well, even if a very large request comes from
-            * super fast link that is always able to accept data (in real world
-            * scenario think about 'KEYS *' against the loopback interface).
-            *
-            * However if we are over the maxmemory limit we ignore that and
-            * just deliver as much data as it is possible to deliver.
-            *
-            * Moreover, we also send as much as possible if the client is
-            * a slave or a monitor (otherwise, on high-speed traffic, the
-            * replication/output buffer will grow indefinitely) */
-            if (totwritten > NET_MAX_WRITES_PER_EVENT &&
-                (server.maxmemory == 0 ||
-                zmalloc_used_memory() < server.maxmemory) &&
-                !(c->flags & CLIENT_SLAVE)) break;
         }
         atomicIncr(server.stat_net_repl_output_bytes, totwritten);
     } else {
+        /* If we reach this block and client is marked with CLIENT_SLAVE flag
+         * it's because it's a MONITOR client, which are marked as replicas,
+         * but exposed as normal clients */
+        const int is_monitor = c->flags & CLIENT_SLAVE;
         while(_clientHasPendingRepliesNonSlave(c)) {
             int ret = _writeToClientNonSlave(c, &nwritten);
             if (ret == C_ERR) break;
@@ -2127,12 +2118,13 @@ int writeToClient(client *c, int handler_installed) {
             * just deliver as much data as it is possible to deliver.
             *
             * Moreover, we also send as much as possible if the client is
-            * a slave or a monitor (otherwise, on high-speed traffic, the
-            * replication/output buffer will grow indefinitely) */
+            * a slave (covered above) or a monitor (covered here).
+            * (otherwise, on high-speed traffic, the
+            * output buffer will grow indefinitely) */
             if (totwritten > NET_MAX_WRITES_PER_EVENT &&
                 (server.maxmemory == 0 ||
                 zmalloc_used_memory() < server.maxmemory) &&
-                !(c->flags & CLIENT_SLAVE)) break;
+                !is_monitor) break;
         }
         atomicIncr(server.stat_net_output_bytes, totwritten);
     }
@@ -4166,6 +4158,8 @@ int getClientType(client *c) {
 }
 
 static inline int clientTypeIsSlave(client *c) {
+    /* Even though MONITOR clients are marked as replicas, we
+     * want the expose them as normal clients. */
     if (unlikely((c->flags & CLIENT_SLAVE) && !(c->flags & CLIENT_MONITOR)))
         return 1;
     return 0;
