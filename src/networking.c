@@ -2124,7 +2124,7 @@ int writeToClient(client *c, int handler_installed) {
             if (totwritten > NET_MAX_WRITES_PER_EVENT &&
                 (server.maxmemory == 0 ||
                 zmalloc_used_memory() < server.maxmemory) &&
-                !is_monitor) break;
+                is_normal_client) break;
         }
         atomicIncr(server.stat_net_output_bytes, totwritten);
     }
