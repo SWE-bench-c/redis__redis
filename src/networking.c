@@ -159,7 +159,7 @@ client *createClient(connection *conn) {
     c->argv_len_sum = 0;
     c->original_argc = 0;
     c->original_argv = NULL;
-    c->cmd = c->lastcmd = c->realcmd = NULL;
+    c->cmd = c->lastcmd = c->realcmd = c->iolookedcmd = NULL;
     c->cur_script = NULL;
     c->multibulklen = 0;
     c->bulklen = -1;
@@ -1080,8 +1080,8 @@ void addReplyBulk(client *c, robj *obj) {
          * to the output buffer. */
         char buf[34];
         size_t len = ll2string(buf,sizeof(buf),(long)obj->ptr);
-        buf[len+1] = '\r';
-        buf[len+2] = '\n';
+        buf[len] = '\r';
+        buf[len+1] = '\n';
         _addReplyLongLongBulk(c, len);
         _addReplyToBufferOrList(c,buf,len+2);
     } else {
@@ -1456,6 +1456,7 @@ static inline void freeClientArgvInternal(client *c, int free_argv) {
         decrRefCount(c->argv[j]);
     c->argc = 0;
     c->cmd = NULL;
+    c->iolookedcmd = NULL;
     c->argv_len_sum = 0;
     if (free_argv) {
         c->argv_len = 0;
@@ -2059,11 +2060,8 @@ int _writeToClient(client *c, ssize_t *nwritten) {
  * thread safe. */
 int writeToClient(client *c, int handler_installed) {
     if (!(c->io_flags & CLIENT_IO_WRITE_ENABLED)) return C_OK;
-    /* Update total number of writes on server */
-    atomicIncr(server.stat_total_writes_processed, 1);
-    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-        atomicIncr(server.stat_io_writes_processed, 1);
-    }
+    /* Update the number of writes of io threads on server */
+    atomicIncr(server.stat_io_writes_processed[c->running_tid], 1);
 
     ssize_t nwritten = 0, totwritten = 0;
 
@@ -2511,6 +2509,7 @@ int processMultibulkBuffer(client *c) {
         } else {
             /* Check if we have space in argv, grow if needed */
             if (c->argc >= c->argv_len) {
+                serverAssert(c->argv_len); /* Ensure argv is not freed while the client is in the mid of parsing command. */
                 c->argv_len = min(c->argv_len < INT_MAX/2 ? c->argv_len*2 : INT_MAX, c->argc+c->multibulklen);
                 c->argv = zrealloc(c->argv, sizeof(robj*)*c->argv_len);
             }
@@ -2781,6 +2780,7 @@ int processInputBuffer(client *c) {
              * as one that needs to process the command. */
             if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
                 c->io_flags |= CLIENT_IO_PENDING_COMMAND;
+                c->iolookedcmd = lookupCommand(c->argv, c->argc);
                 enqueuePendingClientsToMainThread(c, 0);
                 break;
             }
@@ -2835,11 +2835,8 @@ void readQueryFromClient(connection *conn) {
     if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
     c->read_error = 0;
 
-    /* Update total number of reads on server */
-    atomicIncr(server.stat_total_reads_processed, 1);
-    if (c->running_tid != IOTHREAD_MAIN_THREAD_ID) {
-        atomicIncr(server.stat_io_reads_processed, 1);
-    }
+    /* Update the number of reads of io threads on server */
+    atomicIncr(server.stat_io_reads_processed[c->running_tid], 1);
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
@@ -3998,7 +3995,7 @@ void replaceClientCommandVector(client *c, int argc, robj **argv) {
     retainOriginalCommandVector(c);
     freeClientArgv(c);
     c->argv = argv;
-    c->argc = argc;
+    c->argc = c->argv_len = argc;
     c->argv_len_sum = 0;
     for (j = 0; j < c->argc; j++)
         if (c->argv[j])
