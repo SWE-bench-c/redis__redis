@@ -1309,7 +1309,7 @@ static inline int _clientHasPendingRepliesSlave(client *c){
     if (c->ref_repl_buf_node == NULL) return 0;
 
     /* If the last replication buffer block content is totally sent,
-        * we have nothing to send. */
+     * we have nothing to send. */
     listNode *ln = listLast(server.repl_buffer_blocks);
     replBufBlock *tail = listNodeValue(ln);
     if (ln == c->ref_repl_buf_node &&
@@ -2109,18 +2109,18 @@ int writeToClient(client *c, int handler_installed) {
             if (ret == C_ERR) break;
             totwritten += nwritten;
             /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
-            * bytes, in a single threaded server it's a good idea to serve
-            * other clients as well, even if a very large request comes from
-            * super fast link that is always able to accept data (in real world
-            * scenario think about 'KEYS *' against the loopback interface).
-            *
-            * However if we are over the maxmemory limit we ignore that and
-            * just deliver as much data as it is possible to deliver.
-            *
-            * Moreover, we also send as much as possible if the client is
-            * a slave (covered above) or a monitor (covered here).
-            * (otherwise, on high-speed traffic, the
-            * output buffer will grow indefinitely) */
+             * bytes, in a single threaded server it's a good idea to serve
+             * other clients as well, even if a very large request comes from
+             * super fast link that is always able to accept data (in real world
+             * scenario think about 'KEYS *' against the loopback interface).
+             *
+             * However if we are over the maxmemory limit we ignore that and
+             * just deliver as much data as it is possible to deliver.
+             *
+             * Moreover, we also send as much as possible if the client is
+             * a slave (covered above) or a monitor (covered here).
+             * (otherwise, on high-speed traffic, the
+             * output buffer will grow indefinitely) */
             if (totwritten > NET_MAX_WRITES_PER_EVENT &&
                 (server.maxmemory == 0 ||
                 zmalloc_used_memory() < server.maxmemory) &&
