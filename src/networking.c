@@ -1298,11 +1298,11 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
     ((replBufBlock *)listNodeValue(dst->ref_repl_buf_node))->refcount++;
 }
 
-static inline int _clientHasPendingRepliesNonSlave(client *c){
+static inline int _clientHasPendingRepliesNonSlave(client *c) {
     return c->bufpos || listLength(c->reply);
 }
 
-static inline int _clientHasPendingRepliesSlave(client *c){
+static inline int _clientHasPendingRepliesSlave(client *c) {
     /* Replicas use global shared replication buffer instead of
      * private output buffer. */
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
@@ -2103,8 +2103,8 @@ int writeToClient(client *c, int handler_installed) {
         /* If we reach this block and client is marked with CLIENT_SLAVE flag
          * it's because it's a MONITOR client, which are marked as replicas,
          * but exposed as normal clients */
-        const int is_monitor = c->flags & CLIENT_SLAVE;
-        while(_clientHasPendingRepliesNonSlave(c)) {
+        const int is_normal_client = !(c->flags & CLIENT_SLAVE);
+        while (_clientHasPendingRepliesNonSlave(c)) {
             int ret = _writeToClientNonSlave(c, &nwritten);
             if (ret == C_ERR) break;
             totwritten += nwritten;
