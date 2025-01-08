@@ -788,7 +788,8 @@ int clientsCronResizeQueryBuffer(client *c) {
 
 /* If the client has been idle for too long, free the client's arguments. */
 int clientsCronFreeArgvIfIdle(client *c) {
-    /* If the client is in the mid of parsing command, exit ASAP. */
+    /* If the client is in the middle of parsing a command, or if argv is in use
+     * (e.g. parsed in the IO thread but not yet executed, or blocked), exit ASAP. */
     if (!c->argv || c->multibulklen || c->argc) return 0;
     time_t idletime = server.unixtime - c->lastinteraction;
     if (idletime > 2) {
