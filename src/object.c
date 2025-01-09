@@ -714,29 +714,33 @@ robj *getDecodedObject(robj *o) {
 
 /* We create string object pools for client argv object to avoid memory allocation
  * and deallocation. The string objects use EMBSTR encoding to avoid memory waste.
- * As memory allocators are typically aligned to 8 bytes, the size of string object
- * with EMBSTR encoding will be 24, 32, 40, 48, 56, or 64 bytes. We create pools of
- * string objects with different sizes, now we have 6 pools to cover all EMBSTR
- * encoding string object with different sizes. */
+ * As the header of string object with EMBSTR encoding has the fixed size of 20 bytes,
+ * and memory allocators are typically aligned to 8 bytes, the size of string object
+ * with EMBSTR encoding will be 24, 32, 40, 48, 56, or 64 bytes, so the significant
+ * length for storing data is 4, 12, 20, 28, 36, or 44 bytes. Now we create 6 pools
+ * to cover all EMBSTR encoding string object with different sizes. */
 #define CLIENT_ARGV_OBJECT_POOL_NUM 6
-#define CLIENT_ARGV_OBJECT_POOL_INIT_COUNT 16
-#define CLIENT_ARGV_OBJECT_POOL_CAPACITY   256
+#define CLIENT_ARGV_OBJECT_POOL_INIT_LOG 4 /* 16 */
+#define CLIENT_ARGV_OBJECT_POOL_CAPACITY_LOG 8 /* 256, powers of 2 allow fast % with & */
 
 /* Create client argv object pools and initialize them. */
 clientArgvOjectPool *createClientArgvObjectPools(void) {
+    serverAssert((CLIENT_ARGV_OBJECT_POOL_NUM-1)*8+4 == OBJ_ENCODING_EMBSTR_SIZE_LIMIT);
+    serverAssert(CLIENT_ARGV_OBJECT_POOL_INIT_LOG <= CLIENT_ARGV_OBJECT_POOL_CAPACITY_LOG);
+
     clientArgvOjectPool *pools = zmalloc(sizeof(clientArgvOjectPool) *
                                          CLIENT_ARGV_OBJECT_POOL_NUM);
     for (int i = 0; i < CLIENT_ARGV_OBJECT_POOL_NUM; i++) {
         clientArgvOjectPool *pool = pools + i;
         pool->object_size = 4 + i*8;
-        pool->count = CLIENT_ARGV_OBJECT_POOL_INIT_COUNT;
-        pool->capacity = CLIENT_ARGV_OBJECT_POOL_CAPACITY;
+        pool->count = 1 << CLIENT_ARGV_OBJECT_POOL_INIT_LOG;
+        pool->capacity = 1 << CLIENT_ARGV_OBJECT_POOL_CAPACITY_LOG;
         pool->object_queue = zcalloc(sizeof(robj*) * pool->capacity);
         for (int i = 0; i < pool->count; i++) {
             pool->object_queue[i] = createStringObject(SDS_NOINIT, pool->object_size);
         }
         pool->head = 0;
-        pool->tail = pool->count % pool->capacity;
+        pool->tail = pool->count & (pool->capacity - 1);
     }
     return pools;
 }
@@ -754,7 +758,7 @@ robj *tryAllocObjectFromArgvOjectPool(const char *ptr, size_t len) {
 
     if (likely(pool->count > 0)) {
         o = pool->object_queue[pool->head];
-        pool->head = (pool->head + 1) % pool->capacity;
+        pool->head = (pool->head + 1) & (pool->capacity - 1);
         pool->count--;
     } else {
         /* If object queue is empty, create a new object with the specific size,
@@ -783,7 +787,7 @@ void tryFreeObjectToArgvOjectPool(robj *o) {
         return;
     }
     pool->object_queue[pool->tail] = o;
-    pool->tail = (pool->tail + 1) % pool->capacity;
+    pool->tail = (pool->tail + 1) & (pool->capacity - 1);
     pool->count++;
 }
 
