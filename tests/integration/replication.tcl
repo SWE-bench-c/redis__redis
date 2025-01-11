@@ -1308,10 +1308,8 @@ start_server {tags {"repl external:skip"}} {
                     assert_equal [s master_replid] [s -1 master_replid]
                     assert ![log_file_matches [srv -1 stdout] "*Connection with master lost*"]
                     # Sub replica just has one full sync, no partial resync.
-                    # Though, full sync will include a single partial sync as
-                    # there will be two connections in parallel.
                     assert_equal 1 [s sync_full]
-                    assert_equal 1 [s sync_partial_ok]
+                    assert_equal 0 [s sync_partial_ok]
                 }
             }
         }

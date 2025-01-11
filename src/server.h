@@ -395,16 +395,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CLIENT_MODULE_PREVENT_AOF_PROP (1ULL<<48) /* Module client do not want to propagate to AOF */
 #define CLIENT_MODULE_PREVENT_REPL_PROP (1ULL<<49) /* Module client do not want to propagate to replica */
 #define CLIENT_REPROCESSING_COMMAND (1ULL<<50) /* The client is re-processing the command. */
-#define CLIENT_REPL_RDB_CHANNEL (1ULL<<51)      /* Rdb channel replication sync: track a connection which is used for rdb delivery */
-#define CLIENT_PROTECTED_RDB_CHANNEL (1ULL<<52) /* Rdb channel replication sync: Protects the RDB client from premature
-                                                 * release during full sync. This flag is used to ensure that the RDB client, which
-                                                 * references the first replication data block required by the replica, is not
-                                                 * released prematurely. Protecting the client is crucial for prevention of
-                                                 * synchronization failures. If the RDB client is released before the replica initiates
-                                                 * PSYNC, the master will reduce the reference count (o->refcount) of the block needed
-                                                 * by the replica. This could potentially lead to the removal of the required data block,
-                                                 * resulting in synchronization failures.By using this flag, we ensure that the RDB client
-                                                 * remains intact until the replica has successfully initiated PSYNC. */
+#define CLIENT_REPL_RDB_CHANNEL (1ULL<<51)      /* Client which is used for rdb delivery as part of rdb channel replication */
 
 /* Any flag that does not let optimize FLUSH SYNC to run it in bg as blocking client ASYNC */
 #define CLIENT_AVOID_BLOCKING_ASYNC_FLUSH (CLIENT_DENY_BLOCKING|CLIENT_MULTI|CLIENT_LUA_DEBUG|CLIENT_LUA_DEBUG_SYNC|CLIENT_MODULE)
@@ -494,15 +485,13 @@ typedef enum {
     REPL_RDB_CH_RECEIVE_REPLCONF_REPLY, /* Wait for REPLCONF reply */
     REPL_RDB_CH_RECEIVE_FULLRESYNC,     /* Wait for +FULLRESYNC reply */
     REPL_RDB_CH_RDB_LOADING,            /* Loading rdb using rdb channel */
-    REPL_RDB_CH_RDB_LOADED,             /* RDB is loaded */
 } repl_rdb_channel_state;
 
 /* Replication debug flags for testing. */
 #define REPL_DEBUG_PAUSE_NONE             (1 << 0)
 #define REPL_DEBUG_AFTER_FORK             (1 << 1)
-#define REPL_DEBUG_BEFORE_MAIN_CONN_PSYNC (1 << 2)
+#define REPL_DEBUG_BEFORE_RDB_CHANNEL     (1 << 2)
 #define REPL_DEBUG_ON_STREAMING_REPL_BUF  (1 << 3)
-
 
 /* The state of an in progress coordinated failover */
 typedef enum {
@@ -522,7 +511,9 @@ typedef enum {
 #define SLAVE_STATE_ONLINE 9 /* RDB file transmitted, sending just updates. */
 #define SLAVE_STATE_RDB_TRANSMITTED 10 /* RDB file transmitted - This state is used only for
                                         * a replica that only wants RDB without replication buffer  */
-#define SLAVE_STATE_BG_RDB_TRANSFER 11 /* Main channel of a replica which uses rdb channel replication.
+#define SLAVE_STATE_WAIT_RDB_CHANNEL 11 /* Main channel of replica is connected,
+                                         * we are waiting rdbchannel connection to start delivery.*/
+#define SLAVE_STATE_BG_RDB_TRANSFER 12 /* Main channel of a replica which uses rdb channel replication.
                                         * Sending RDB file and replication stream in parallel. */
 
 /* Slave capabilities. */
@@ -530,7 +521,6 @@ typedef enum {
 #define SLAVE_CAPA_EOF              (1<<0) /* Can parse the RDB EOF streaming format. */
 #define SLAVE_CAPA_PSYNC2           (1<<1) /* Supports PSYNC2 protocol. */
 #define SLAVE_CAPA_RDB_CHANNEL_REPL (1<<2) /* Supports rdb channel replication during full sync */
-
 
 /* Slave requirements */
 #define SLAVE_REQ_NONE                  0
@@ -549,9 +539,6 @@ typedef enum {
 /* In order to quickly find the requested offset for PSYNC requests,
  * we index some nodes in the replication buffer linked list into a rax. */
 #define REPL_BACKLOG_INDEX_PER_BLOCKS 64
-
-/* Grace period in seconds for replica main channel to establish psync. */
-#define REPL_DELAY_RDB_CLIENT_FREE 60
 
 /* List related stuff */
 #define LIST_HEAD 0
@@ -1314,8 +1301,7 @@ typedef struct client {
     char *slave_addr;       /* Optionally given by REPLCONF ip-address */
     int slave_capa;         /* Slave capabilities: SLAVE_CAPA_* bitwise OR. */
     int slave_req;          /* Slave requirements: SLAVE_REQ_* */
-    uint64_t rdb_client_id; /* The client id of this replica's rdb connection */
-    time_t rdb_client_disconnect_time; /* Time of the first freeClient call on this client. Used for delaying free. */
+    uint64_t main_ch_client_id; /* The client id of this replica's main channel */
     multiState mstate;      /* MULTI/EXEC state */
     blockingState bstate;     /* blocking state */
     long long woff;         /* Last write global replication offset. */
@@ -1729,7 +1715,7 @@ struct redisServer {
     list *clients_pending_write; /* There is to write or install handler. */
     list *clients_pending_read;  /* Client has pending read socket buffers. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
-    rax *replicas_waiting_psync;/* List of rdb channel clients until their main channel establishes pysnc. */
+    rax *replicas_waiting_rdbchannel;/* List of main channel clients until their rdb channel connects. */
     client *current_client;     /* The client that triggered the command execution (External or AOF). */
     client *executing_client;   /* The client executing the current command (possibly script or module). */
 
@@ -2011,8 +1997,6 @@ struct redisServer {
                                          * delay (start sooner if they all connect). */
     int repl_rdb_channel;           /* Config used to determine if the replica should
                                      * use rdb channel replication for full syncs. */
-    int repl_delay_rdb_client_free; /* Grace period in seconds for replica main channel
-                                      * to establish psync. */
     int repl_debug_pause;           /* Debug config to force the main process to pause. */
     size_t repl_buffer_mem;         /* The memory of replication buffer. */
     list *repl_buffer_blocks;       /* Replication buffers blocks list
@@ -2028,8 +2012,7 @@ struct redisServer {
     int repl_syncio_timeout; /* Timeout for synchronous I/O calls */
     int repl_state;          /* Replication status if the instance is a slave */
     int repl_rdb_ch_state; /* State of the replica's rdb channel during rdb channel replication */
-    int repl_loaded_rdb_dbid; /* dbid in the loaded rdb */
-    uint64_t repl_rdbchannel_client_id; /* rdbchannel client id as defined on master side */
+    uint64_t repl_main_ch_client_id; /* Main channel client id received in +RDBCHANNELSYNC reply. */
     off_t repl_transfer_size; /* Size of RDB to read from master during sync. */
     off_t repl_transfer_read; /* Amount of RDB read from master during sync. */
     off_t repl_transfer_last_fsync_off; /* Offset when we fsync-ed last time. */
@@ -2980,7 +2963,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc);
 void replicationFeedStreamFromMasterStream(char *buf, size_t buflen);
 void resetReplicationBuffer(void);
 void feedReplicationBuffer(char *buf, size_t len);
-void freeReplicaReferencedReplBuffer(client *replica);
+void freeReplicaReferences(client *replica);
 void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv, int argc);
 void updateSlavesWaitingBgsave(int bgsaveerr, int type);
 void replicationCron(void);

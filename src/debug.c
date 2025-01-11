@@ -486,10 +486,8 @@ void debugCommand(client *c) {
 "    In case RESET is provided the peak reset time will be restored to the default value",
 "REPLYBUFFER RESIZING <0|1>",
 "    Enable or disable the reply buffer resize cron job",
-"REPL-PAUSE <clear|after-fork|before-main-conn-psync|on-streaming-repl-buf>",
+"REPL-PAUSE <clear|after-fork|before-rdb-channel|on-streaming-repl-buf>",
 "    Pause the server's main process during various replication steps.",
-"DELAY-RDB-CLIENT-FREE <seconds>",
-"    Grace period in seconds for replica main channel to establish psync.",
 "DICT-RESIZING <0|1>",
 "    Enable or disable the main dict and expire dict resizing.",
 "SCRIPT <LIST|<sha>>",
@@ -1030,17 +1028,14 @@ NULL
             server.repl_debug_pause = REPL_DEBUG_PAUSE_NONE;
         } else if (!strcasecmp(c->argv[2]->ptr,"after-fork")) {
             server.repl_debug_pause |= REPL_DEBUG_AFTER_FORK;
-        } else if (!strcasecmp(c->argv[2]->ptr, "before-main-conn-psync")) {
-            server.repl_debug_pause |= REPL_DEBUG_BEFORE_MAIN_CONN_PSYNC;
+        } else if (!strcasecmp(c->argv[2]->ptr,"before-rdb-channel")) {
+            server.repl_debug_pause |= REPL_DEBUG_BEFORE_RDB_CHANNEL;
         } else if (!strcasecmp(c->argv[2]->ptr, "on-streaming-repl-buf")) {
             server.repl_debug_pause |= REPL_DEBUG_ON_STREAMING_REPL_BUF;
         } else {
             addReplySubcommandSyntaxError(c);
             return;
         }
-        addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "delay-rdb-client-free") && c->argc == 3) {
-        server.repl_delay_rdb_client_free = atoi(c->argv[2]->ptr);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "dict-resizing") && c->argc == 3) {
         server.dict_resizing = atoi(c->argv[2]->ptr);

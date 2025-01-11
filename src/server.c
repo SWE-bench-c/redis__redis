@@ -2181,8 +2181,6 @@ void initServerConfig(void) {
     server.master_initial_offset = -1;
     server.repl_state = REPL_STATE_NONE;
     server.repl_rdb_ch_state = REPL_RDB_CH_STATE_NONE;
-    server.repl_rdbchannel_client_id = 0;
-    server.repl_loaded_rdb_dbid = -1;
     server.repl_pending_data = (struct replDataBuf) {0};
     server.repl_transfer_tmpfile = NULL;
     server.repl_transfer_fd = -1;
@@ -2692,8 +2690,7 @@ void initServer(void) {
     server.clients_to_close = listCreate();
     server.slaves = listCreate();
     server.monitors = listCreate();
-    server.replicas_waiting_psync = raxNew();
-    server.repl_delay_rdb_client_free = REPL_DELAY_RDB_CLIENT_FREE;
+    server.replicas_waiting_rdbchannel = raxNew();
     server.clients_pending_write = listCreate();
     server.clients_pending_read = listCreate();
     server.clients_timeout_table = raxNew();
@@ -5463,6 +5460,7 @@ const char *replstateToString(int replstate) {
     switch (replstate) {
     case SLAVE_STATE_WAIT_BGSAVE_START:
     case SLAVE_STATE_WAIT_BGSAVE_END:
+    case SLAVE_STATE_WAIT_RDB_CHANNEL:
         return "wait_bgsave";
     case SLAVE_STATE_BG_RDB_TRANSFER:
         return "bg_rdb_transfer";
@@ -6144,7 +6142,6 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
             }
         }
         info = sdscatprintf(info, FMTARGS(
-            "replicas_waiting_psync:%"PRIu64"\r\n", raxSize(server.replicas_waiting_psync),
             "master_failover_state:%s\r\n", getFailoverStateString(),
             "master_replid:%s\r\n", server.replid,
             "master_replid2:%s\r\n", server.replid2,
