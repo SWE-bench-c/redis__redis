@@ -1750,7 +1750,7 @@ void freeClient(client *c) {
     /* Free data structures. */
     listRelease(c->reply);
     zfree(c->buf);
-    freeReplicaReferences(c);
+    freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
     freeClientOriginalArgv(c);
     if (c->deferred_reply_errors)
@@ -1852,7 +1852,7 @@ void freeClientAsync(client *c) {
     c->flags |= CLIENT_CLOSE_ASAP;
     /* Replicas that was marked as CLIENT_CLOSE_ASAP should not keep the
      * replication backlog from been trimmed. */
-    if (c->flags & CLIENT_SLAVE) freeReplicaReferences(c);
+    if (c->flags & CLIENT_SLAVE) freeReplicaReferencedReplBuffer(c);
     listAddNodeTail(server.clients_to_close,c);
 }
 

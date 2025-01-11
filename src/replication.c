@@ -45,7 +45,6 @@ int replicaPutOnline(client *slave);
 void replicaStartCommandStream(client *slave);
 int cancelReplicationHandshake(int reconnect);
 static void rdbChannelFullSyncWithMaster(connection *conn);
-static client *rdbChannelLookupMainChannelClient(uint64_t id);
 static int rdbChannelAbortRdbTransfer(void);
 static void rdbChannelBufferReplData(connection *conn);
 static void rdbChannelReplDataBufInit(void);
@@ -69,19 +68,13 @@ static rio *disklessLoadingRio = NULL;
 /* Returns 1 if the replica is rdbchannel and there is an associated main
  * channel slave with that. */
 int replicationCheckHasMainChannel(client *replica) {
-    listNode *ln;
-    listIter li;
-
-    if (!(replica->flags & CLIENT_REPL_RDB_CHANNEL))
+    if (!(replica->flags & CLIENT_REPL_RDB_CHANNEL) ||
+        !replica->main_ch_client_id ||
+        lookupClientByID(replica->main_ch_client_id) == NULL)
+    {
         return 0;
-
-    listRewind(server.slaves,&li);
-    while ((ln = listNext(&li))) {
-        client *c = listNodeValue(ln);
-        if (replica->main_ch_client_id && replica->main_ch_client_id == c->id)
-            return 1;
     }
-    return 0;
+    return 1;
 }
 
 /* During rdb channel replication, replica opens two connections. From master
@@ -374,12 +367,8 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
                               server.repl_backlog->histlen + 1;
 }
 
-/* Free replication buffer blocks that are referenced by this client.
- * Also, removes replica from rdbchannel waiting list. */
-void freeReplicaReferences(client *replica) {
-    raxRemove(server.replicas_waiting_rdbchannel,
-              (unsigned char*) &replica->id, sizeof(replica->id), NULL);
-
+/* Free replication buffer blocks that are referenced by this client. */
+void freeReplicaReferencedReplBuffer(client *replica) {
     if (replica->ref_repl_buf_node != NULL) {
         /* Decrease the start buffer node reference count. */
         replBufBlock *o = listNodeValue(replica->ref_repl_buf_node);
@@ -789,11 +778,9 @@ int replicationSetupSlaveForFullResync(client *slave, long long offset) {
              * change its state so we can deliver replication stream from now
              * on, in parallel to rdb. */
             uint64_t id = slave->main_ch_client_id;
-            client *c = rdbChannelLookupMainChannelClient(id);
-            if (c) {
+            client *c = lookupClientByID(id);
+            if (c && c->replstate == SLAVE_STATE_WAIT_RDB_CHANNEL) {
                 c->replstate = SLAVE_STATE_BG_RDB_TRANSFER;
-                raxRemove(server.replicas_waiting_rdbchannel,
-                          (unsigned char*) &id, sizeof(id), NULL);
                 serverLog(LL_NOTICE, "Starting to deliver RDB and replication stream to replica: %s",
                           replicationGetSlaveName(c));
             } else {
@@ -1124,9 +1111,6 @@ void syncCommand(client *c) {
                 listAddNodeTail(server.slaves, c);
                 createReplicationBacklogIfNeeded();
 
-                /* Add replica to waiting rdbchannel list. */
-                raxInsert(server.replicas_waiting_rdbchannel,
-                          (unsigned char*)&c->id, sizeof(c->id), c, NULL);
                 serverLog(LL_NOTICE,
                           "Replica %s is capable of rdb channel synchronization, and partial sync isn't possible. "
                           "Full sync will continue with dedicated rdb channel.",
@@ -1406,9 +1390,11 @@ void replconfCommand(client *c) {
              * the current replica rdb channel with existing main channel
              * connection. */
             long long client_id = 0;
+            client *main_ch;
             if (getLongLongFromObjectOrReply(c, c->argv[j + 1], &client_id, NULL) != C_OK)
                 return;
-            if (!rdbChannelLookupMainChannelClient(client_id)) {
+            main_ch = lookupClientByID(client_id);
+            if (!main_ch || main_ch->replstate != SLAVE_STATE_WAIT_RDB_CHANNEL) {
                 addReplyErrorFormat(c, "Unrecognized RDB client id: %lld", client_id);
                 return;
             }
@@ -3117,6 +3103,7 @@ void syncWithMaster(connection *conn) {
             goto error;
         }
         server.repl_rdb_ch_state = REPL_RDB_CH_SEND_HANDSHAKE;
+        connSetReadHandler(server.repl_transfer_s, NULL);
         return;
     }
 
@@ -3467,14 +3454,6 @@ void replicationHandleMasterDisconnection(void) {
  *   │  +CONTINUE                                   │
  *   └──────────────────────────────────────────────┘
  */
-
-static client *rdbChannelLookupMainChannelClient(uint64_t id) {
-    void *c = NULL;
-    if (id == 0)
-        return NULL;
-    raxFind(server.replicas_waiting_rdbchannel, (unsigned char *)&id, sizeof(id), &c);
-    return c;
-}
 
 /* Replication: Replica side. */
 static int rdbChannelSendHandshake(connection *conn, sds *err) {
