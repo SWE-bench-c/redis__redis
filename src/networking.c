@@ -249,7 +249,7 @@ void putClientInPendingWriteQueue(client *c) {
      * writes at this stage. */
     if (!(c->flags & CLIENT_PENDING_WRITE) &&
         (c->replstate == REPL_STATE_NONE ||
-         c->replstate == SLAVE_STATE_BG_RDB_TRANSFER ||
+         c->replstate == SLAVE_STATE_SEND_BULK_AND_STREAM ||
          (c->replstate == SLAVE_STATE_ONLINE && !c->repl_start_cmd_stream_on_ack)))
     {
         /* Here instead of installing the write handler, we just flag the
@@ -4281,7 +4281,7 @@ void flushSlavesOutputBuffers(void) {
          *
          * 3. Obviously if the slave is not ONLINE.
          */
-        if ((slave->replstate == SLAVE_STATE_ONLINE || slave->replstate == SLAVE_STATE_BG_RDB_TRANSFER) &&
+        if ((slave->replstate == SLAVE_STATE_ONLINE || slave->replstate == SLAVE_STATE_SEND_BULK_AND_STREAM) &&
             !(slave->flags & CLIENT_CLOSE_ASAP) &&
             can_receive_writes &&
             !slave->repl_start_cmd_stream_on_ack &&

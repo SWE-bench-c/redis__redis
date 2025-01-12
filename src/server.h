@@ -513,8 +513,8 @@ typedef enum {
                                         * a replica that only wants RDB without replication buffer  */
 #define SLAVE_STATE_WAIT_RDB_CHANNEL 11 /* Main channel of replica is connected,
                                          * we are waiting rdbchannel connection to start delivery.*/
-#define SLAVE_STATE_BG_RDB_TRANSFER 12 /* Main channel of a replica which uses rdb channel replication.
-                                        * Sending RDB file and replication stream in parallel. */
+#define SLAVE_STATE_SEND_BULK_AND_STREAM 12 /* Main channel of a replica which uses rdb channel replication.
+                                             * Sending RDB file and replication stream in parallel. */
 
 /* Slave capabilities. */
 #define SLAVE_CAPA_NONE             0

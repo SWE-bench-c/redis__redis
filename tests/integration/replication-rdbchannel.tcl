@@ -140,7 +140,7 @@ start_server {tags {"repl external:skip"}} {
 
         # On master info output, we should see state transition in this order:
         # 1. wait_bgsave: Replica receives psync error (+RDBCHANNELSYNC)
-        # 2. bg_rdb_transfer: Replica opens rdbchannel and delivery started
+        # 2. send_bulk_and_stream: Replica opens rdbchannel and delivery started
         # 3. online: Sync is completed
         test "Test replica state should start with wait_bgsave" {
             $replica config set key-load-delay 100000
@@ -156,14 +156,14 @@ start_server {tags {"repl external:skip"}} {
             }
         }
 
-        test "Test replica state advances to bg_rdb_transfer when rdbchannel connects" {
+        test "Test replica state advances to send_bulk_and_stream when rdbchannel connects" {
             $master set x 1
             resume_process $replica_pid
 
             wait_for_condition 50 200 {
                 [s 0 connected_slaves] == 1 &&
                 [s 0 rdb_bgsave_in_progress] == 1 &&
-                [string match "*bg_rdb_transfer*" [s 0 slave0]]
+                [string match "*send_bulk_and_stream*" [s 0 slave0]]
             } else {
                 fail "replica failed"
             }
@@ -292,7 +292,7 @@ start_server {tags {"repl external:skip"}} {
 
             # Wait for replica to establish psync using main channel
             wait_for_condition 500 1000 {
-                [string match "*state=bg_rdb_transfer*" [s 0 slave0]]
+                [string match "*state=send_bulk_and_stream*" [s 0 slave0]]
             } else {
                 fail "replica didn't start sync"
             }
@@ -508,7 +508,7 @@ start_server {tags {"repl external:skip"}} {
 
             # Wait for sync session to start
             wait_for_condition 500 200 {
-                [string match "*state=bg_rdb_transfer*" [s -1 slave0]] &&
+                [string match "*state=send_bulk_and_stream*" [s -1 slave0]] &&
                 [s -1 rdb_bgsave_in_progress] eq 1
             } else {
                 fail "replica didn't start sync session in time"
@@ -527,7 +527,7 @@ start_server {tags {"repl external:skip"}} {
 
             # Replica should retry
             wait_for_condition 500 200 {
-                [string match "*state=bg_rdb_transfer*" [s -1 slave0]] &&
+                [string match "*state=send_bulk_and_stream*" [s -1 slave0]] &&
                 [s -1 rdb_bgsave_in_progress] eq 1
             } else {
                 fail "replica didn't retry after connection close"
@@ -545,7 +545,7 @@ start_server {tags {"repl external:skip"}} {
 
             # Replica should retry
             wait_for_condition 500 2000 {
-                [string match "*state=bg_rdb_transfer*" [s -1 slave0]] &&
+                [string match "*state=send_bulk_and_stream*" [s -1 slave0]] &&
                 [s -1 rdb_bgsave_in_progress] eq 1
             } else {
                 fail "replica didn't retry after connection close"

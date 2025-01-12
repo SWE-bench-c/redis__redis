@@ -1279,7 +1279,7 @@ start_server {tags {"repl external:skip"}} {
                 wait_for_condition 50 100 {
                     ([s -2 rdb_bgsave_in_progress] == 1) &&
                         ([string match "*wait_bgsave*" [s -2 slave0]] ||
-                         [string match "*bg_rdb_transfer*" [s -2 slave0]])
+                         [string match "*send_bulk_and_stream*" [s -2 slave0]])
                 } else {
                     fail "full sync didn't start"
                 }

@@ -780,7 +780,7 @@ int replicationSetupSlaveForFullResync(client *slave, long long offset) {
             uint64_t id = slave->main_ch_client_id;
             client *c = lookupClientByID(id);
             if (c && c->replstate == SLAVE_STATE_WAIT_RDB_CHANNEL) {
-                c->replstate = SLAVE_STATE_BG_RDB_TRANSFER;
+                c->replstate = SLAVE_STATE_SEND_BULK_AND_STREAM;
                 serverLog(LL_NOTICE, "Starting to deliver RDB and replication stream to replica: %s",
                           replicationGetSlaveName(c));
             } else {
@@ -1329,7 +1329,7 @@ void replconfCommand(client *c) {
                 checkChildrenDone();
             if (c->repl_start_cmd_stream_on_ack && c->replstate == SLAVE_STATE_ONLINE)
                 replicaStartCommandStream(c);
-            if (c->replstate == SLAVE_STATE_BG_RDB_TRANSFER)
+            if (c->replstate == SLAVE_STATE_SEND_BULK_AND_STREAM)
                 replicaPutOnline(c);
             /* Note: this command does not reply anything! */
             return;

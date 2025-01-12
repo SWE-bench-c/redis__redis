@@ -5461,8 +5461,8 @@ const char *replstateToString(int replstate) {
     case SLAVE_STATE_WAIT_BGSAVE_END:
     case SLAVE_STATE_WAIT_RDB_CHANNEL:
         return "wait_bgsave";
-    case SLAVE_STATE_BG_RDB_TRANSFER:
-        return "bg_rdb_transfer";
+    case SLAVE_STATE_SEND_BULK_AND_STREAM:
+        return "send_bulk_and_stream";
     case SLAVE_STATE_SEND_BULK:
         return "send_bulk";
     case SLAVE_STATE_ONLINE:
