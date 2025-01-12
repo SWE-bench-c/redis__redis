@@ -3575,7 +3575,6 @@ static int rdbChannelHandleFullresyncReply(connection *conn, sds *err) {
     server.repl_state = REPL_STATE_TRANSFER;
     rdbChannelReplDataBufInit();
 
-    serverLog(LL_NOTICE, "Fullresync reply from master: %s", *err);
     serverLog(LL_NOTICE, "Starting to receive RDB and replication stream in parallel.");
 
     /* RDB is still loading. Setup connection to accumulate repl data.  */
