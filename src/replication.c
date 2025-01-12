@@ -2717,7 +2717,7 @@ int slaveTryPartialResynchronization(connection *conn, int read_reply) {
     }
 
     if (!strncmp(reply, "+RDBCHANNELSYNC", strlen("+RDBCHANNELSYNC"))) {
-        char *client_id = client_id = strchr(reply,' ');
+        char *client_id = strchr(reply,' ');
         if (client_id)
             client_id++;
 
