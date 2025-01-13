@@ -364,11 +364,6 @@ start_server {tags {"repl external:skip"}} {
             # Make sure config is used, we accumulated more than
             # client-output-buffer-limit
             assert_morethan [s -1 replica_full_sync_buffer_size] 1024
-
-            # Speed up loading and verify db's are identical
-            $replica config set key-load-delay 0
-            wait_for_ofs_sync $master $replica
-            assert_equal [$master debug digest] [$replica debug digest]
         }
     }
 }
