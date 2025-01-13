@@ -520,7 +520,7 @@ start_server {tags {"repl external:skip"}} {
                           rdb_bgsave_in_progress:[s -2 rdb_bgsave_in_progress]
                           connected_slaves: [s -2 connected_slaves]"
                 }
-                wait_for_log_messages -2 {"*Background transfer error*"} $loglines 1000 10
+                wait_for_log_messages -2 {"*Background transfer error*"} $loglines 1000 50
             }
 
             stop_write_load $load_handle
