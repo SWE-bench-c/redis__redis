@@ -2181,7 +2181,7 @@ void initServerConfig(void) {
     server.master_initial_offset = -1;
     server.repl_state = REPL_STATE_NONE;
     server.repl_rdb_ch_state = REPL_RDB_CH_STATE_NONE;
-    server.repl_pending_data = (struct replDataBuf) {0};
+    server.repl_full_sync_buffer = (struct replDataBuf) {0};
     server.repl_transfer_tmpfile = NULL;
     server.repl_transfer_fd = -1;
     server.repl_transfer_s = NULL;
@@ -6061,8 +6061,8 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
                 "master_sync_in_progress:%d\r\n", server.repl_state == REPL_STATE_TRANSFER,
                 "slave_read_repl_offset:%lld\r\n", slave_read_repl_offset,
                 "slave_repl_offset:%lld\r\n", slave_repl_offset,
-                "replica_repl_pending_data_size:%zu\r\n", server.repl_pending_data.size,
-                "replica_repl_pending_data_peak:%zu\r\n", server.repl_pending_data.peak));
+                "replica_full_sync_buffer_size:%zu\r\n", server.repl_full_sync_buffer.size,
+                "replica_full_sync_buffer_peak:%zu\r\n", server.repl_full_sync_buffer.peak));
 
             if (server.repl_state == REPL_STATE_TRANSFER) {
                 double perc = 0;

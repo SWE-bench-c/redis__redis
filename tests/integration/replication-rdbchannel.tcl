@@ -294,7 +294,7 @@ start_server {tags {"repl external:skip"}} {
             # be completed successfully.
 
             # Create some artificial delay for rdb delivery and load. We'll
-            # generate some traffic meanwhile to fill replication buffer.
+            # generate some traffic to fill the replication buffer.
             $master config set rdb-key-save-delay 1000
             $replica config set key-load-delay 1000
             $replica config set client-output-buffer-limit "replica 64kb 64kb 0"
@@ -334,6 +334,42 @@ start_server {tags {"repl external:skip"}} {
             assert_morethan [$master dbsize] 0
             assert_equal [$master debug digest] [$replica debug digest]
         }
+
+        test "Test replication stream buffer config replica-full-sync-buffer-limit" {
+            # By default, replica inherits client-output-buffer-limit of replica
+            # to limit accumulated repl data during rdbchannel sync.
+            # replica-full-sync-buffer-limit should override it if it is set.
+            $replica replicaof no one
+
+            # Create some artificial delay for rdb delivery and load. We'll
+            # generate some traffic to fill the replication buffer.
+            $master config set rdb-key-save-delay 1000
+            $replica config set key-load-delay 1000
+            $replica config set client-output-buffer-limit "replica 1024 1024 0"
+            $replica config set replica-full-sync-buffer-limit 20mb
+            populate 2000 master 1
+
+            $replica replicaof $master_host $master_port
+
+            # Wait until replication starts
+            wait_for_condition 500 1000 {
+                [string match "*state=send_bulk_and_stream*" [s 0 slave0]]
+            } else {
+                fail "replica didn't start sync"
+            }
+
+            # Create some traffic on replication stream
+            populate 100 master 100000
+
+            # Make sure config is used, we accumulated more than
+            # client-output-buffer-limit
+            assert_morethan [s -1 replica_full_sync_buffer_size] 1024
+
+            # Speed up loading and verify db's are identical
+            $replica config set key-load-delay 0
+            wait_for_ofs_sync $master $replica
+            assert_equal [$master debug digest] [$replica debug digest]
+        }
     }
 }
 
@@ -362,7 +398,6 @@ start_server {tags {"repl external:skip"}} {
         $replica config set loading-process-events-interval-bytes 1024
 
         test "Test master disconnects replica when output buffer limit is reached" {
-            # Pause master main process after fork
             populate 20000 master 100 -1
 
             $replica replicaof $master_host $master_port
@@ -608,7 +643,7 @@ start_server {tags {"repl external:skip"}} {
 
             # Check if repl stream accumulation is started.
             wait_for_condition 50 1000 {
-                [s -1 replica_repl_pending_data_size] > 0
+                [s -1 replica_full_sync_buffer_size] > 0
             } else {
                 fail "repl stream accumulation not started"
             }
@@ -630,7 +665,7 @@ start_server {tags {"repl external:skip"}} {
             wait_for_log_messages -1 {"*Master client was freed while streaming*"} 0 500 10
 
             # Quick check for stats test coverage
-            assert_morethan_equal [s -1 replica_repl_pending_data_peak] [s -1 replica_repl_pending_data_size]
+            assert_morethan_equal [s -1 replica_full_sync_buffer_peak] [s -1 replica_full_sync_buffer_size]
 
             # Wait until replica recovers and verify db's are identical
             wait_replica_online $master 0 1000 10

@@ -3668,20 +3668,20 @@ error:
  * Initialize replica's local replication buffer to accumulate repl stream
  * during rdb channel sync. */
 static void rdbChannelReplDataBufInit(void) {
-    serverAssert(server.repl_pending_data.blocks == NULL);
-    server.repl_pending_data.size = 0;
-    server.repl_pending_data.used = 0;
-    server.repl_pending_data.blocks = listCreate();
-    server.repl_pending_data.blocks->free = zfree;
+    serverAssert(server.repl_full_sync_buffer.blocks == NULL);
+    server.repl_full_sync_buffer.size = 0;
+    server.repl_full_sync_buffer.used = 0;
+    server.repl_full_sync_buffer.blocks = listCreate();
+    server.repl_full_sync_buffer.blocks->free = zfree;
 }
 
 /* Replication: Replica side.
  * Free replica's local replication buffer */
 static void rdbChannelReplDataBufFree(void) {
-    listRelease(server.repl_pending_data.blocks);
-    server.repl_pending_data.blocks = NULL;
-    server.repl_pending_data.size = 0;
-    server.repl_pending_data.used = 0;
+    listRelease(server.repl_full_sync_buffer.blocks);
+    server.repl_full_sync_buffer.blocks = NULL;
+    server.repl_full_sync_buffer.size = 0;
+    server.repl_full_sync_buffer.used = 0;
 }
 
 /* Replication: Replica side.
@@ -3700,7 +3700,7 @@ int rdbChannelReadIntoBuf(connection *conn, replDataBufBlock *b) {
     }
 
     b->used += nread;
-    server.repl_pending_data.used += nread;
+    server.repl_full_sync_buffer.used += nread;
     atomicIncr(server.stat_net_repl_input_bytes, nread);
 
     return nread;
@@ -3714,7 +3714,7 @@ void rdbChannelBufferReplData(connection *conn) {
     int nread = 0;
     int needs_read = 1;
 
-    listNode *ln = listLast(server.repl_pending_data.blocks);
+    listNode *ln = listLast(server.repl_full_sync_buffer.blocks);
     replDataBufBlock *tail = ln ? listNodeValue(ln) : NULL;
 
     /* Try to append last node. */
@@ -3732,8 +3732,14 @@ void rdbChannelBufferReplData(connection *conn) {
         unsigned long long limit;
         size_t usable_size;
 
-        limit = server.client_obuf_limits[CLIENT_TYPE_SLAVE].hard_limit_bytes;
-        if (limit != 0 && server.repl_pending_data.size > limit) {
+        /* For accumulation limit, if 'replica-full-sync-buffer-limit' is set,
+         * we'll use it. Otherwise, 'client-output-buffer-limit <replica>' is
+         * the limit.*/
+        limit = server.repl_full_sync_buffer_limit;
+        if (limit == 0)
+             limit = server.client_obuf_limits[CLIENT_TYPE_SLAVE].hard_limit_bytes;
+
+        if (limit != 0 && server.repl_full_sync_buffer.size > limit) {
             serverLog(LL_NOTICE, "Replication buffer limit has been reached (%llu bytes), "
                                  "stopped buffering replication stream. Further accumulation may occur on master side. ", limit);
             connSetReadHandler(conn, NULL);
@@ -3744,12 +3750,12 @@ void rdbChannelBufferReplData(connection *conn) {
         tail->size = usable_size - sizeof(replDataBufBlock);
         tail->used = 0;
 
-        listAddNodeTail(server.repl_pending_data.blocks, tail);
-        server.repl_pending_data.size += tail->size;
+        listAddNodeTail(server.repl_full_sync_buffer.blocks, tail);
+        server.repl_full_sync_buffer.size += tail->size;
 
         /* Update buffer's peak */
-        if (server.repl_pending_data.peak < server.repl_pending_data.size)
-            server.repl_pending_data.peak = server.repl_pending_data.size;
+        if (server.repl_full_sync_buffer.peak < server.repl_full_sync_buffer.size)
+            server.repl_full_sync_buffer.peak = server.repl_full_sync_buffer.size;
 
         rdbChannelReadIntoBuf(conn, tail);
     }
@@ -3765,26 +3771,26 @@ int rdbChannelStreamReplDataToDb(client *c) {
 
     serverAssert(c->flags & CLIENT_MASTER);
 
-    if (!server.repl_pending_data.blocks)
+    if (!server.repl_full_sync_buffer.blocks)
         return C_OK;
 
     blockingOperationStarts();
     protectClient(c);
-    while ((n = listFirst(server.repl_pending_data.blocks))) {
+    while ((n = listFirst(server.repl_full_sync_buffer.blocks))) {
         o = listNodeValue(n);
         size = o->size;
         used = o->used;
         c->querybuf = sdscatlen(c->querybuf, o->buf, used);
         c->read_reploff += (long long int) used;
-        listDelNode(server.repl_pending_data.blocks, n);
+        listDelNode(server.repl_full_sync_buffer.blocks, n);
 
         /* We don't expect error return value but just in case. */
         ret = processInputBuffer(c);
         if (ret != C_OK)
             break;
 
-        server.repl_pending_data.used -= used;
-        server.repl_pending_data.size -= size;
+        server.repl_full_sync_buffer.used -= used;
+        server.repl_full_sync_buffer.size -= size;
 
         if (server.repl_debug_pause & REPL_DEBUG_ON_STREAMING_REPL_BUF)
             debugPauseProcess();
@@ -3802,7 +3808,7 @@ int rdbChannelStreamReplDataToDb(client *c) {
         /* Check if master client was freed in processEventsWhileBlocked().
          * It can happen if we receive 'replicaof' command or 'client kill'
          * command for the master. */
-        if (c->flags & CLIENT_CLOSE_ASAP || !server.repl_pending_data.blocks) {
+        if (c->flags & CLIENT_CLOSE_ASAP || !server.repl_full_sync_buffer.blocks) {
             ret = C_ERR;
             break;
         }
@@ -3872,7 +3878,7 @@ static int rdbChannelAbortRdbTransfer(void) {
 /* Replica side. After loading the rdb, stream replication buffer to the db. */
 static void rdbChannelSuccess(void) {
     serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Starting to stream replication buffer into the db"
-                         " (%zu bytes).", server.repl_pending_data.used);
+                         " (%zu bytes).", server.repl_full_sync_buffer.used);
 
     if (rdbChannelStreamReplDataToDb(server.master) == C_ERR) {
         serverLog(LL_WARNING, "Failed to stream local replication buffer into the db");
