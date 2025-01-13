@@ -289,10 +289,9 @@ static inline int _prepareClientToWrite(client *c) {
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data).
      *
-     * If CLIENT_PENDING_READ is set, we're in an IO thread and should
-     * not put the client in pending write queue. Instead, it will be
-     * done by handleClientsWithPendingReadsUsingThreads() upon return.
-     */
+     * If the client runs in an IO thread, we should not put the client in the
+     * pending write queue. Instead, we will install the write handler to the
+     * corresponding IO thread’s event loop and let it handle the reply. */
     if (!clientHasPendingReplies(c) && likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
         putClientInPendingWriteQueue(c);
 
