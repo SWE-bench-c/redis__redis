@@ -2875,11 +2875,12 @@ int processInputBuffer(client *c) {
     return C_OK;
 }
 
-void readQueryFromClient(connection *conn) {
+static bool _readQueryFromClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     int nread, big_arg = 0;
     size_t qblen, readlen;
-    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return;
+    bool recv_ready = true;
+    if (!(c->io_flags & CLIENT_IO_READ_ENABLED)) return recv_ready;
     c->read_error = 0;
 
     /* Update the number of reads of io threads on server */
@@ -2965,6 +2966,11 @@ void readQueryFromClient(connection *conn) {
         freeClientAsync(c);
         goto done;
     }
+    if (readlen == (size_t)nread) {
+        /* If the nread is equal to readlen,
+         it likely indicates that socket's buffer still has pending data to be read. */
+        recv_ready = false;
+    }
 
     sdsIncrLen(c->querybuf,nread);
     qblen = sdslen(c->querybuf);
@@ -3009,6 +3015,20 @@ done:
         resetReusableQueryBuf(c);
     }
     beforeNextClient(c);
+
+    if (c && c->flags & (CLIENT_CLOSE_AFTER_REPLY|CLIENT_CLOSE_ASAP)) {
+        recv_ready = true;
+    }
+    return recv_ready;
+}
+
+void readQueryFromClient(connection *conn) {
+    for (int x = 0; x < NET_MAX_READS_PER_EVENT; x += 1) {
+        bool recv_done = _readQueryFromClient(conn);
+        if (recv_done) {
+            break;
+        }
+    }
 }
 
 /* A Redis "Address String" is a colon separated ip:port pair.
