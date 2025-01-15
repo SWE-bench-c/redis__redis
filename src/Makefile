@@ -344,12 +344,15 @@ QUIET_LINK = @printf '    %b %b\n' $(LINKCOLOR)LINK$(ENDCOLOR) $(BINCOLOR)$@$(EN
 QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
 endif
 
+GEN_COMMANDS_FLAGS=
 ifneq (, $(findstring LOG_REQ_RES, $(REDIS_CFLAGS)))
 	COMMANDS_DEF_FILENAME=commands_with_reply_schema
-	GEN_COMMANDS_FLAGS=--with-reply-schema
+	GEN_COMMANDS_FLAGS+=--with-reply-schema
 else
 	COMMANDS_DEF_FILENAME=commands
-	GEN_COMMANDS_FLAGS=
+endif
+ifneq (, $(findstring EXPERIMENTAL_CMDS, $(REDIS_CFLAGS)))
+	GEN_COMMANDS_FLAGS+=--with-experimental-cmds
 endif
 
 REDIS_SERVER_NAME=redis-server$(PROG_SUFFIX)
