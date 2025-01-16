@@ -137,53 +137,55 @@ start_server {tags {"modules"}} {
         assert_equal 1 [llength $keys]
     }
 
-    test {Reduce defrag CPU usage when module data can't be defragged} {
-        r flushdb
-        r config set hz 100
-        r config set activedefrag no
-        r config set active-defrag-threshold-lower 5
-        r config set active-defrag-cycle-min 1
-        r config set active-defrag-cycle-max 75
-        r config set active-defrag-ignore-bytes 100kb
+    if {[string match {*jemalloc*} [s mem_allocator]] && [r debug mallctl arenas.page] <= 8192} {
+        test {Reduce defrag CPU usage when module data can't be defragged} {
+            r flushdb
+            r config set hz 100
+            r config set activedefrag no
+            r config set active-defrag-threshold-lower 5
+            r config set active-defrag-cycle-min 1
+            r config set active-defrag-cycle-max 75
+            r config set active-defrag-ignore-bytes 100kb
 
-        # Populate memory with interleaving hash field of same size
-        set n 10000
-        set dummy "[string repeat x 400]"
-        set rd [redis_deferring_client]
-        for {set i 0} {$i < $n} {incr i} { $rd datatype.set k$i 1 $dummy }
-        for {set i 0} {$i < [expr $n]} {incr i} { $rd read } ;# Discard replies
+            # Populate memory with interleaving hash field of same size
+            set n 10000
+            set dummy "[string repeat x 400]"
+            set rd [redis_deferring_client]
+            for {set i 0} {$i < $n} {incr i} { $rd datatype.set k$i 1 $dummy }
+            for {set i 0} {$i < [expr $n]} {incr i} { $rd read } ;# Discard replies
 
-        after 120 ;# serverCron only updates the info once in 100ms
-        if {$::verbose} {
-            puts "used [s allocator_allocated]"
-            puts "rss [s allocator_active]"
-            puts "frag [s allocator_frag_ratio]"
-            puts "frag_bytes [s allocator_frag_bytes]"
-        }
-        assert_lessthan [s allocator_frag_ratio] 1.05
-
-        for {set i 0} {$i < $n} {incr i 2} { $rd del k$i }
-        for {set j 0} {$j < $n} {incr j 2} { $rd read } ; # Discard del replies
-        $rd close
-        after 120 ;# serverCron only updates the info once in 100ms
-        assert_morethan [s allocator_frag_ratio] 1.4
-
-        catch {r config set activedefrag yes} e
-        if {[r config get activedefrag] eq "activedefrag yes"} {
-            # wait for the active defrag to start working (decision once a second)
-            wait_for_condition 50 100 {
-                [s total_active_defrag_time] ne 0
-            } else {
-                after 120 ;# serverCron only updates the info once in 100ms
-                puts [r info memory]
-                puts [r info stats]
-                puts [r memory malloc-stats]
-                fail "defrag not started."
+            after 120 ;# serverCron only updates the info once in 100ms
+            if {$::verbose} {
+                puts "used [s allocator_allocated]"
+                puts "rss [s allocator_active]"
+                puts "frag [s allocator_frag_ratio]"
+                puts "frag_bytes [s allocator_frag_bytes]"
             }
+            assert_lessthan [s allocator_frag_ratio] 1.05
 
-            assert_not_equal [s total_active_defrag_time] 0
+            for {set i 0} {$i < $n} {incr i 2} { $rd del k$i }
+            for {set j 0} {$j < $n} {incr j 2} { $rd read } ; # Discard del replies
+            $rd close
+            after 120 ;# serverCron only updates the info once in 100ms
             assert_morethan [s allocator_frag_ratio] 1.4
-            wait_for_log_messages 0 {"*Starting active defrag*cpu=1%*"} 0 10 1000
+
+            catch {r config set activedefrag yes} e
+            if {[r config get activedefrag] eq "activedefrag yes"} {
+                # wait for the active defrag to start working (decision once a second)
+                wait_for_condition 50 100 {
+                    [s total_active_defrag_time] ne 0
+                } else {
+                    after 120 ;# serverCron only updates the info once in 100ms
+                    puts [r info memory]
+                    puts [r info stats]
+                    puts [r memory malloc-stats]
+                    fail "defrag not started."
+                }
+
+                assert_not_equal [s total_active_defrag_time] 0
+                assert_morethan [s allocator_frag_ratio] 1.4
+                wait_for_log_messages 0 {"*Starting active defrag*cpu=1%*"} 0 10 1000
+            }
         }
     }
 }
