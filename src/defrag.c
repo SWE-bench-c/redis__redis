@@ -1024,7 +1024,7 @@ int defragLaterStep(redisDb *db, int slot, long long endtime) {
 #define LIMIT(y, min, max) ((y)<(min)? min: ((y)>(max)? max: (y)))
 
 /* decide if defrag is needed, and at what CPU effort to invest in it */
-void computeDefragCycles(void) {
+void computeDefragCycles(float decay_rate) {
     size_t frag_bytes;
     float frag_pct = getAllocatorFragmentation(&frag_bytes);
     /* If we're not already running, and below the threshold, exit. */
@@ -1040,6 +1040,7 @@ void computeDefragCycles(void) {
             server.active_defrag_threshold_upper,
             server.active_defrag_cycle_min,
             server.active_defrag_cycle_max);
+    cpu_pct *= decay_rate;
     cpu_pct = LIMIT(cpu_pct,
             server.active_defrag_cycle_min,
             server.active_defrag_cycle_max);
@@ -1069,6 +1070,8 @@ void activeDefragCycle(void) {
     static unsigned long defrag_cursor = 0;
     static redisDb *db = NULL;
     static long long start_scan, start_stat;
+    static size_t start_frag_bytes = 0;
+    static float decay_rate = 1.0f;
     unsigned int iterations = 0;
     unsigned long long prev_defragged = server.stat_active_defrag_hits;
     unsigned long long prev_scanned = server.stat_active_defrag_scanned;
@@ -1104,13 +1107,13 @@ void activeDefragCycle(void) {
     /* Once a second, check if the fragmentation justfies starting a scan
      * or making it more aggressive. */
     run_with_period(1000) {
-        computeDefragCycles();
+        computeDefragCycles(decay_rate);
     }
 
     /* Normally it is checked once a second, but when there is a configuration
      * change, we want to check it as soon as possible. */
     if (server.active_defrag_configuration_changed) {
-        computeDefragCycles();
+        computeDefragCycles(decay_rate);
         server.active_defrag_configuration_changed = 0;
     }
 
@@ -1159,9 +1162,20 @@ void activeDefragCycle(void) {
                 db = NULL;
                 server.active_defrag_running = 0;
 
+                /* If the last defragmented bytes in the last cycle is less than 1%, gradually
+                 * reduce the decay rate by 10% for the next cycle to avoid excessive CPU usage. */
+                if (start_frag_bytes - frag_bytes && 
+                    (float)(start_frag_bytes - frag_bytes) / (start_frag_bytes + 1) < 0.01)
+                {
+                    decay_rate *= 0.9;
+                } else {
+                    decay_rate = 1.0f;
+                }
+                start_frag_bytes = frag_bytes;
+
                 moduleDefragEnd();
 
-                computeDefragCycles(); /* if another scan is needed, start it right away */
+                computeDefragCycles(decay_rate); /* if another scan is needed, start it right away */
                 if (server.active_defrag_running != 0 && ustime() < endtime)
                     continue;
                 break;
@@ -1179,7 +1193,7 @@ void activeDefragCycle(void) {
             defrag_cursor = 0;
             slot = -1;
             defrag_later_item_in_progress = 0;
-        }
+            }
 
         /* This array of structures holds the parameters for all defragmentation stages. */
         typedef struct defragStage {
