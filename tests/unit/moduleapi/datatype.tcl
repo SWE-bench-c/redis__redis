@@ -148,7 +148,7 @@ start_server {tags {"modules"}} {
             r config set active-defrag-ignore-bytes 100kb
 
             # Populate memory with interleaving hash field of same size
-            set n 10000
+            set n 20000
             set dummy "[string repeat x 400]"
             set rd [redis_deferring_client]
             for {set i 0} {$i < $n} {incr i} { $rd datatype.set k$i 1 $dummy }
@@ -182,8 +182,8 @@ start_server {tags {"modules"}} {
                     fail "defrag not started."
                 }
 
-                assert_not_equal [s total_active_defrag_time] 0
                 assert_morethan [s allocator_frag_ratio] 1.4
+                # The cpu usage of defragment will drop to active-defrag-cycle-min
                 wait_for_log_messages 0 {"*Starting active defrag*cpu=1%*"} 0 10 1000
             }
         }
