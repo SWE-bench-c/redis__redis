@@ -1164,7 +1164,7 @@ void activeDefragCycle(void) {
 
                 /* If the last defragmented bytes in the last cycle is less than 1%, gradually
                  * reduce the decay rate by 10% for the next cycle to avoid excessive CPU usage. */
-                if (start_frag_bytes - frag_bytes && 
+                if (start_frag_bytes >= frag_bytes &&
                     (float)(start_frag_bytes - frag_bytes) / (start_frag_bytes + 1) < 0.01)
                 {
                     decay_rate *= 0.9;
