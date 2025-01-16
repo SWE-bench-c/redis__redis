@@ -1193,7 +1193,7 @@ void activeDefragCycle(void) {
             defrag_cursor = 0;
             slot = -1;
             defrag_later_item_in_progress = 0;
-            }
+        }
 
         /* This array of structures holds the parameters for all defragmentation stages. */
         typedef struct defragStage {
