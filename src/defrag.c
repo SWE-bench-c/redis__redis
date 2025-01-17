@@ -1069,8 +1069,7 @@ void activeDefragCycle(void) {
     static int defrag_stage = 0;
     static unsigned long defrag_cursor = 0;
     static redisDb *db = NULL;
-    static long long start_scan, start_stat;
-    static size_t start_frag_bytes = 0;
+    static long long start_scan, start_hits, start_misses;
     static float decay_rate = 1.0f;
     unsigned int iterations = 0;
     unsigned long long prev_defragged = server.stat_active_defrag_hits;
@@ -1151,7 +1150,7 @@ void activeDefragCycle(void) {
                 float frag_pct = getAllocatorFragmentation(&frag_bytes);
                 serverLog(LL_VERBOSE,
                     "Active defrag done in %dms, reallocated=%d, frag=%.0f%%, frag_bytes=%zu",
-                    (int)((now - start_scan)/1000), (int)(server.stat_active_defrag_hits - start_stat), frag_pct, frag_bytes);
+                    (int)((now - start_scan)/1000), (int)(server.stat_active_defrag_hits - start_hits), frag_pct, frag_bytes);
 
                 start_scan = now;
                 current_db = -1;
@@ -1162,16 +1161,14 @@ void activeDefragCycle(void) {
                 db = NULL;
                 server.active_defrag_running = 0;
 
-                /* If the last defragmented bytes in the last cycle is less than 1%, gradually
+                /* If the last defragmented hits in the last cycle is less than 1%, gradually
                  * reduce the decay rate by 10% for the next cycle to avoid excessive CPU usage. */
-                if (start_frag_bytes >= frag_bytes &&
-                    (float)(start_frag_bytes - frag_bytes) / (start_frag_bytes + 1) < 0.01)
-                {
+                long long last_hits = server.stat_active_defrag_hits - start_hits;
+                long long last_misses = server.stat_active_defrag_misses - start_misses;
+                if ((float)(last_hits) / (last_hits + last_misses + 1) < 0.01)
                     decay_rate *= 0.9;
-                } else {
+                else
                     decay_rate = 1.0f;
-                }
-                start_frag_bytes = frag_bytes;
 
                 moduleDefragEnd();
 
@@ -1183,7 +1180,8 @@ void activeDefragCycle(void) {
             else if (current_db==0) {
                 /* Start a scan from the first database. */
                 start_scan = ustime();
-                start_stat = server.stat_active_defrag_hits;
+                start_hits = server.stat_active_defrag_hits;
+                start_misses = server.stat_active_defrag_misses;
             }
 
             db = &server.db[current_db];
