@@ -143,7 +143,7 @@ start_server {tags {"modules"}} {
             r config set hz 100
             r config set activedefrag no
             r config set active-defrag-threshold-lower 5
-            r config set active-defrag-cycle-min 1
+            r config set active-defrag-cycle-min 5
             r config set active-defrag-cycle-max 75
             r config set active-defrag-ignore-bytes 100kb
 
@@ -184,7 +184,7 @@ start_server {tags {"modules"}} {
 
                 assert_morethan [s allocator_frag_ratio] 1.4
                 # The cpu usage of defragment will drop to active-defrag-cycle-min
-                wait_for_log_messages 0 {"*Starting active defrag*cpu=1%*"} 0 10 1000
+                wait_for_log_messages 0 {"*Starting active defrag*cpu=5%*"} 0 10 1000
             }
         }
     }
