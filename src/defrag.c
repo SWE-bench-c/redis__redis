@@ -1070,6 +1070,7 @@ void activeDefragCycle(void) {
     static unsigned long defrag_cursor = 0;
     static redisDb *db = NULL;
     static long long start_scan, start_hits, start_misses;
+    static size_t start_frag_bytes;
     static float decay_rate = 1.0f;
     unsigned int iterations = 0;
     unsigned long long prev_defragged = server.stat_active_defrag_hits;
@@ -1161,14 +1162,19 @@ void activeDefragCycle(void) {
                 db = NULL;
                 server.active_defrag_running = 0;
 
-                /* If the last defragmented hits in the last cycle is less than 1%, gradually
-                 * reduce the decay rate by 10% for the next cycle to avoid excessive CPU usage. */
+                /* If the defragmentation hits and defragmented bytes are both
+                 * below 1%, which indicates low defragmentation efficiency.
+                 * Reduce the defragmentation speed by 10% for the next cycle. */
                 long long last_hits = server.stat_active_defrag_hits - start_hits;
                 long long last_misses = server.stat_active_defrag_misses - start_misses;
-                if ((float)(last_hits) / (last_hits + last_misses + 1) < 0.01)
+                if (last_hits < (last_hits + last_misses) * 0.01 &&
+                    start_frag_bytes >= frag_bytes &&
+                    (start_frag_bytes - frag_bytes) < start_frag_bytes * 0.01)
+                {
                     decay_rate *= 0.9;
-                else
+                } else {
                     decay_rate = 1.0f;
+                }
 
                 moduleDefragEnd();
 
@@ -1182,6 +1188,7 @@ void activeDefragCycle(void) {
                 start_scan = ustime();
                 start_hits = server.stat_active_defrag_hits;
                 start_misses = server.stat_active_defrag_misses;
+                getAllocatorFragmentation(&start_frag_bytes);
             }
 
             db = &server.db[current_db];
