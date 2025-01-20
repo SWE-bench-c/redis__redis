@@ -184,7 +184,11 @@ start_server {tags {"modules"}} {
 
                 assert_morethan [s allocator_frag_ratio] 1.4
                 # The cpu usage of defragment will drop to active-defrag-cycle-min
-                wait_for_log_messages 0 {"*Starting active defrag*cpu=5%*"} 0 10 1000
+                wait_for_condition 1000 50 {
+                    [s active_defrag_running] == 5
+                } else {
+                    fail "Unable to reduce the defragmentation speed."
+                }
             }
         }
     }
