@@ -1168,8 +1168,8 @@ void activeDefragCycle(void) {
                 /* When defragmentation efficiency is low, we gradually reduce the
                  * speed for the next cycle to avoid CPU waste. However, in the
                  * following two cases, we keep the normal speed:
-                 * 1) If the fragmentation rate has decreased and defragmentation hits are above 1%.
-                 * 2) If the fragmented percentage have increased by 5%. */
+                 * 1) If the fragmentation percentage has decreased and defragmentation hits are above 1%.
+                 * 2) If the fragmentation percentage have increased by 5%. */
                 if ((last_frag_pct_change < 0 && last_hits >= (last_hits + last_misses) * 0.01) ||
                     last_frag_pct_change > 0.05)
                 {
