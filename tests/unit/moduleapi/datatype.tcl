@@ -147,8 +147,9 @@ start_server {tags {"modules"}} {
             r config set active-defrag-cycle-max 75
             r config set active-defrag-ignore-bytes 100kb
 
-            # Populate memory with interleaving hash field of same size
-            set n 20000
+            # Populate memory with interleaving field of same size, keeping the last 1000 to verify
+            # later that increasing fragmentation can restore defragmentation speed.
+            set n 21000
             set dummy "[string repeat x 400]"
             set rd [redis_deferring_client]
             for {set i 0} {$i < $n} {incr i} { $rd datatype.set k$i 1 $dummy }
@@ -163,9 +164,8 @@ start_server {tags {"modules"}} {
             }
             assert_lessthan [s allocator_frag_ratio] 1.05
 
-            for {set i 0} {$i < $n} {incr i 2} { $rd del k$i }
-            for {set j 0} {$j < $n} {incr j 2} { $rd read } ; # Discard del replies
-            $rd close
+            for {set i 0} {$i < 20000} {incr i 2} { $rd del k$i }
+            for {set j 0} {$j < 20000} {incr j 2} { $rd read } ; # Discard del replies
             after 120 ;# serverCron only updates the info once in 100ms
             assert_morethan [s allocator_frag_ratio] 1.4
 
@@ -189,6 +189,20 @@ start_server {tags {"modules"}} {
                 } else {
                     fail "Unable to reduce the defragmentation speed."
                 }
+
+                # Create some small traffic to verify it does not restore defragmentation speed
+                for {set i 0} {$i < 100} {incr i} { 
+                    r set k dummy
+                    r del k
+                }
+                assert_equal [s active_defrag_running] 5
+
+                # Create additional fragments to verify defragmentation speed will restore
+                set loglines [count_log_lines 0]
+                for {set i 20001} {$i < $n} {incr i 2} { $rd del k$i }
+                for {set j 20001} {$j < $n} {incr j 2} { $rd read } ; # Discard del replies
+                wait_for_log_messages 0 {"*Starting active defrag*cpu=10%*"} $loglines 10 1000
+                $rd close
             }
         }
     }

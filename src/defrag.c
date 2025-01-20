@@ -14,6 +14,7 @@
 
 #include "server.h"
 #include <stddef.h>
+#include <math.h>
 
 #ifdef HAVE_DEFRAG
 
@@ -1168,10 +1169,11 @@ void activeDefragCycle(void) {
                 /* When defragmentation efficiency is low, we gradually reduce the
                  * speed for the next cycle to avoid CPU waste. However, in the
                  * following two cases, we keep the normal speed:
-                 * 1) If the fragmentation percentage has decreased and defragmentation hits are above 1%.
-                 * 2) If the fragmentation percentage have increased by 5%. */
-                if ((last_frag_pct_change < 0 && last_hits >= (last_hits + last_misses) * 0.01) ||
-                    (last_frag_pct_change > 0 && last_frag_pct_change > 0.05))
+                 * 1) If the fragmentation percentage has increased or decreased by more than 2%.
+                 * 2) If the fragmentation percentage decrease is small, but hits are above 1%,
+                 *    we still keep the normal speed. */
+                if (fabs(last_frag_pct_change) > 2 ||
+                    (last_frag_pct_change < 0 && last_hits >= (last_hits + last_misses) * 0.01))
                 {
                     decay_rate = 1.0f;
                 } else {
