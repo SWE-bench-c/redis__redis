@@ -147,9 +147,8 @@ start_server {tags {"modules"}} {
             r config set active-defrag-cycle-max 75
             r config set active-defrag-ignore-bytes 100kb
 
-            # Populate memory with interleaving field of same size, keeping the last 1000 to verify
-            # later that increasing fragmentation can restore defragmentation speed.
-            set n 21000
+            # Populate memory with interleaving field of same size.
+            set n 20000
             set dummy "[string repeat x 400]"
             set rd [redis_deferring_client]
             for {set i 0} {$i < $n} {incr i} { $rd datatype.set k$i 1 $dummy }
@@ -164,8 +163,8 @@ start_server {tags {"modules"}} {
             }
             assert_lessthan [s allocator_frag_ratio] 1.05
 
-            for {set i 0} {$i < 20000} {incr i 2} { $rd del k$i }
-            for {set j 0} {$j < 20000} {incr j 2} { $rd read } ; # Discard del replies
+            for {set i 0} {$i < $n} {incr i 2} { $rd del k$i }
+            for {set j 0} {$j < $n} {incr j 2} { $rd read } ; # Discard del replies
             after 120 ;# serverCron only updates the info once in 100ms
             assert_morethan [s allocator_frag_ratio] 1.4
 
