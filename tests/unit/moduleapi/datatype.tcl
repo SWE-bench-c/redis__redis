@@ -193,9 +193,7 @@ start_server {tags {"modules"}} {
                 set end_time [expr {[clock seconds] + 10}]
                 set speed_restored 0
                 while {[clock seconds] < $end_time} {
-                    set action [expr {int(rand() * 3)}]
-
-                    switch $action {
+                    switch [expr {int(rand() * 3)}] {
                         0 {
                             # Randomly delete a key
                             set random_key [r RANDOMKEY]
@@ -207,14 +205,12 @@ start_server {tags {"modules"}} {
                             # Randomly overwrite a key
                             set random_key [r RANDOMKEY]
                             if {$random_key != ""} {
-                                set dummy "[string repeat x 400]"
                                 r datatype.set $random_key 1 $dummy
                             }
                         }
                         2 {
                             # Randomly generate a new key
                             set random_key "key_[expr {int(rand() * 10000)}]"
-                            set dummy "[string repeat x 400]"
                             r datatype.set $random_key 1 $dummy
                         }
                     }
