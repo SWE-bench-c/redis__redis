@@ -143,7 +143,7 @@ start_server {tags {"modules"}} {
             r config set hz 100
             r config set activedefrag no
             r config set active-defrag-threshold-lower 5
-            r config set active-defrag-cycle-min 5
+            r config set active-defrag-cycle-min 25
             r config set active-defrag-cycle-max 75
             r config set active-defrag-ignore-bytes 100kb
 
@@ -181,28 +181,59 @@ start_server {tags {"modules"}} {
                     puts [r memory malloc-stats]
                     fail "defrag not started."
                 }
-
                 assert_morethan [s allocator_frag_ratio] 1.4
+
                 # The cpu usage of defragment will drop to active-defrag-cycle-min
                 wait_for_condition 1000 50 {
-                    [s active_defrag_running] == 5
+                    [s active_defrag_running] == 25
                 } else {
                     fail "Unable to reduce the defragmentation speed."
                 }
 
-                # Create some small traffic to verify it does not restore defragmentation speed
-                for {set i 0} {$i < 100} {incr i} { 
-                    r set k dummy
-                    r del k
-                }
-                assert_equal [s active_defrag_running] 5
+                # Fuzzy test to restore defragmentation speed to normal
+                set end_time [expr {[clock seconds] + 10}]
+                set speed_restored 0
+                while {[clock seconds] < $end_time} {
+                    set action [expr {int(rand() * 3)}]
 
-                # Create additional fragments to verify defragmentation speed will restore
-                set loglines [count_log_lines 0]
-                for {set i 20001} {$i < $n} {incr i 2} { $rd del k$i }
-                for {set j 20001} {$j < $n} {incr j 2} { $rd read } ; # Discard del replies
-                wait_for_log_messages 0 {"*Starting active defrag*cpu=10%*"} $loglines 10 1000
-                $rd close
+                    switch $action {
+                        0 {
+                            # Randomly delete a key
+                            set random_key [r RANDOMKEY]
+                            if {$random_key != ""} {
+                                r DEL $random_key
+                            }
+                        }
+                        1 {
+                            # Randomly overwrite a key
+                            set random_key [r RANDOMKEY]
+                            if {$random_key != ""} {
+                                set dummy "[string repeat x 400]"
+                                r datatype.set $random_key 1 $dummy
+                            }
+                        }
+                        2 {
+                            # Randomly generate a new key
+                            set random_key "key_[expr {int(rand() * 10000)}]"
+                            set dummy "[string repeat x 400]"
+                            r datatype.set $random_key 1 $dummy
+                        }
+                    }
+
+                    # Wait for defragmentation speed to restore.
+                    if {[s active_defrag_running] > 25} {
+                        set speed_restored 1
+                        break;
+                    }
+                }
+                assert_equal $speed_restored 1
+
+                # After the traffic disappears, the defragmentation speed will decrease again.
+                wait_for_condition 1000 50 {
+                    [s active_defrag_running] == 25
+                } else {
+                    fail "Unable to reduce the defragmentation speed."
+                } 
             }
         }
     }
