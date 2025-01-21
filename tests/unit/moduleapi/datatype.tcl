@@ -227,7 +227,7 @@ start_server {tags {"modules"}} {
                 wait_for_condition 1000 50 {
                     [s active_defrag_running] == 25
                 } else {
-                    fail "Unable to reduce the defragmentation speed."
+                    fail "Unable to reduce the defragmentation speed after traffic disappears."
                 } 
             }
         }
