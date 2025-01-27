@@ -877,7 +877,7 @@ void updateCurIncrAofEndOffset(void) {
     persistAofManifest(server.aof_manifest);
 }
 
-/* After laoding AOF data, we need to update the `server.master_repl_offset`
+/* After loading AOF data, we need to update the `server.master_repl_offset`
  * based on the information of the last INCR AOF, to avoid the rollback of
  * the start offset of new INCR AOF. */
 void updateReplOffsetAndResetEndOffset(void) {
