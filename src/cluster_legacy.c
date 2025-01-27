@@ -90,15 +90,10 @@ int auxTcpPortPresent(clusterNode *n);
 int auxTlsPortSetter(clusterNode *n, void *value, int length);
 sds auxTlsPortGetter(clusterNode *n, sds s);
 int auxTlsPortPresent(clusterNode *n);
-int auxInternalSecretSetter(clusterNode *n, void *value, int length);
-sds auxInternalSecretGetter(clusterNode *n, sds s);
-int auxInternalSecretPresent(clusterNode *n);
 static void clusterBuildMessageHdr(clusterMsg *hdr, int type, size_t msglen);
 void freeClusterLink(clusterLink *link);
 int verifyClusterNodeId(const char *name, int length);
 static void updateShardId(clusterNode *node, const char *shard_id);
-static void setInternalSecret(clusterNode *node, char *internal_secret);
-static void generateRandomSecret(clusterNode *node);
 
 int getNodeDefaultClientPort(clusterNode *n) {
     return server.tls_cluster ? n->tls_port : n->tcp_port;
@@ -190,7 +185,6 @@ typedef enum {
     af_human_nodename,
     af_tcp_port,
     af_tls_port,
-    af_internal_secret,
     af_count,
 } auxFieldIndex;
 
@@ -203,7 +197,6 @@ auxFieldHandler auxFieldHandlers[] = {
     {"nodename", auxHumanNodenameSetter, auxHumanNodenameGetter, auxHumanNodenamePresent},
     {"tcp-port", auxTcpPortSetter, auxTcpPortGetter, auxTcpPortPresent},
     {"tls-port", auxTlsPortSetter, auxTlsPortGetter, auxTlsPortPresent},
-    {"internal-secret", auxInternalSecretSetter, auxInternalSecretGetter, auxInternalSecretPresent},
 };
 
 int auxShardIdSetter(clusterNode *n, void *value, int length) {
@@ -289,22 +282,6 @@ sds auxTlsPortGetter(clusterNode *n, sds s) {
 
 int auxTlsPortPresent(clusterNode *n) {
     return n->tls_port >= 0 && n->tls_port < 65536;
-}
-
-int auxInternalSecretSetter(clusterNode *n, void *value, int length) {
-    if (length != CLUSTER_INTERNALSECRETLEN) {
-        return C_ERR;
-    }
-    setInternalSecret(n, (char*)value);
-    return C_OK;
-}
-
-sds auxInternalSecretGetter(clusterNode *n, sds s) {
-    return sdscatprintf(s, "%s", n->internal_secret);
-}
-
-int auxInternalSecretPresent(clusterNode *n) {
-    return n->internal_secret[0] != '\0';
 }
 
 /* clusterLink send queue blocks */
@@ -537,9 +514,6 @@ int clusterLoadConfig(char *filename) {
                 serverAssert(server.cluster->myself == NULL);
                 myself = server.cluster->myself = n;
                 n->flags |= CLUSTER_NODE_MYSELF;
-                if (n->internal_secret[0] == '\0') {
-                    generateRandomSecret(n);
-                }
             } else if (!strcasecmp(s,"master")) {
                 n->flags |= CLUSTER_NODE_MASTER;
             } else if (!strcasecmp(s,"slave")) {
@@ -1056,6 +1030,8 @@ void clusterInit(void) {
     clusterUpdateMyselfIp();
     clusterUpdateMyselfHostname();
     clusterUpdateMyselfHumanNodename();
+
+    getRandomHexChars(server.cluster->internal_secret, CLUSTER_INTERNALSECRETLEN);
 }
 
 void clusterInitLast(void) {
@@ -1328,16 +1304,6 @@ unsigned long getClusterConnectionsCount(void) {
            ((dictSize(server.cluster->nodes)-1)*2) : 0;
 }
 
-static void generateRandomSecret(clusterNode *node) {
-    getRandomHexChars(node->internal_secret, CLUSTER_INTERNALSECRETLEN);
-    node->internal_secret[CLUSTER_INTERNALSECRETLEN] = '\0';
-}
-
-static void setInternalSecret(clusterNode *node, char *internal_secret) {
-    memcpy(node->internal_secret, internal_secret, CLUSTER_INTERNALSECRETLEN);
-    node->internal_secret[CLUSTER_INTERNALSECRETLEN] = '\0';
-}
-
 /* -----------------------------------------------------------------------------
  * CLUSTER node API
  * -------------------------------------------------------------------------- */
@@ -1357,11 +1323,6 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     else
         getRandomHexChars(node->name, CLUSTER_NAMELEN);
     getRandomHexChars(node->shard_id, CLUSTER_NAMELEN);
-    if (flags & CLUSTER_NODE_MYSELF) {
-        generateRandomSecret(node);
-    } else {
-        memset(node->internal_secret, 0, CLUSTER_INTERNALSECRETLEN + 1);
-    }
     node->ctime = mstime();
     node->configEpoch = 0;
     node->flags = flags;
@@ -1621,32 +1582,11 @@ clusterNode *clusterLookupNode(const char *name, int length) {
 }
 
 const char *clusterGetSecret(size_t *len) {
-    const char *min_secret = NULL;
     if (!server.cluster) {
         return NULL;
     }
-    dictIterator *di = dictGetSafeIterator(server.cluster->nodes);
-    dictEntry *de = NULL;
-    while((de = dictNext(di)) != NULL) {
-        clusterNode *node = dictGetVal(de);
-
-        if (node->internal_secret[0] == '\0') {
-            continue;
-        }
-        if (!min_secret) {
-            min_secret = node->internal_secret;
-        } else {
-            if (memcmp(node->internal_secret, min_secret, CLUSTER_INTERNALSECRETLEN) > 0) {
-                min_secret = node->internal_secret;
-            }
-        }
-    }
-    dictReleaseIterator(di);
-
-    if (min_secret) {
-        *len = CLUSTER_INTERNALSECRETLEN;
-    }
-    return min_secret;
+    *len = CLUSTER_INTERNALSECRETLEN;
+    return server.cluster->internal_secret;
 }
 
 /* Get all the nodes in my shard.
@@ -2577,10 +2517,6 @@ uint32_t getInternalSecretPingExtSize(void) {
     return getAlignedPingExtSize(sizeof(clusterMsgPingExtInternalSecret));
 }
 
-uint32_t getGossipInternalSecretPingExtSize(void) {
-    return getAlignedPingExtSize(sizeof(clusterMsgPingExtGossipInternalSecret));
-}
-
 uint32_t getForgottenNodeExtSize(void) {
     return getAlignedPingExtSize(sizeof(clusterMsgPingExtForgottenNode));
 }
@@ -2675,32 +2611,13 @@ uint32_t writePingExt(clusterMsg *hdr, int gossipcount)  {
     /* Populate insternal secret */
     if (cursor != NULL) {
         clusterMsgPingExtInternalSecret *ext = preparePingExt(cursor, CLUSTERMSG_EXT_TYPE_INTERNALSECRET, getInternalSecretPingExtSize());
-        memcpy(ext->internal_secret, myself->internal_secret, CLUSTER_INTERNALSECRETLEN);
+        memcpy(ext->internal_secret, server.cluster->internal_secret, CLUSTER_INTERNALSECRETLEN);
 
         /* Move the write cursor */
         cursor = nextPingExt(cursor);
     }
     totlen += getInternalSecretPingExtSize();
     extensions++;
-
-    for (int i = 0 ; i < gossipcount ; ++i) {
-        /* Write internal secrets of the nodes we know about */
-        if (cursor != NULL) {
-            clusterMsgDataGossip *g_msg = hdr->data.ping.gossip + i;
-            clusterNode *n = clusterLookupNode(g_msg->nodename, CLUSTER_NAMELEN);
-            if (n->internal_secret[0] == '\0') {
-                continue;
-            }
-            clusterMsgPingExtGossipInternalSecret *ext = preparePingExt(cursor, CLUSTERMSG_EXT_TYPE_GOSSIPINTERNALSECRET, getGossipInternalSecretPingExtSize());
-            memcpy(ext->name, n->name, CLUSTER_NAMELEN);
-            memcpy(ext->internal_secret, n->internal_secret, CLUSTER_INTERNALSECRETLEN);
-
-            /* Move the write cursor */
-            cursor = nextPingExt(cursor);
-        }
-        totlen += getGossipInternalSecretPingExtSize();
-        extensions++;
-    }
 
     if (hdr != NULL) {
         hdr->extensions = htons(extensions);
@@ -2744,12 +2661,8 @@ void clusterProcessPingExtensions(clusterMsg *hdr, clusterLink *link) {
             ext_shardid = shardid_ext->shard_id;
         } else if (type == CLUSTERMSG_EXT_TYPE_INTERNALSECRET) {
             clusterMsgPingExtInternalSecret *internal_secret_ext = (clusterMsgPingExtInternalSecret *) &(ext->ext[0].internal_secret);
-            setInternalSecret(sender, internal_secret_ext->internal_secret);
-        } else if (type == CLUSTERMSG_EXT_TYPE_GOSSIPINTERNALSECRET) {
-            clusterMsgPingExtGossipInternalSecret *gossip_internal_secret_ext = (clusterMsgPingExtGossipInternalSecret *) &(ext->ext[0].gossip_internal_secret);
-            clusterNode *node = clusterLookupNode(gossip_internal_secret_ext->name, CLUSTER_NAMELEN);
-            if (node) {
-                setInternalSecret(node, gossip_internal_secret_ext->internal_secret);
+            if (memcmp(server.cluster->internal_secret, internal_secret_ext->internal_secret, CLUSTER_INTERNALSECRETLEN) < 0 ) {
+                memcpy(server.cluster->internal_secret, internal_secret_ext->internal_secret, CLUSTER_INTERNALSECRETLEN);
             }
         } else {
             /* Unknown type, we will ignore it but log what happened. */
@@ -3750,7 +3663,7 @@ void clusterSendPing(clusterLink *link, int type) {
     estlen = sizeof(clusterMsg) - sizeof(union clusterMsgData);
     estlen += (sizeof(clusterMsgDataGossip)*(wanted + pfail_wanted));
     if (link->node && nodeSupportsExtensions(link->node)) {
-        estlen += writePingExt(NULL, wanted);
+        estlen += writePingExt(NULL, 0);
     }
     /* Note: clusterBuildMessageHdr() expects the buffer to be always at least
      * sizeof(clusterMsg) or more. */
