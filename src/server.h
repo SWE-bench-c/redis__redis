@@ -1609,6 +1609,8 @@ typedef struct {
     sds           file_name;  /* file name */
     long long     file_seq;   /* file sequence */
     aof_file_type file_type;  /* file type */
+    long long     start_offset;  /* the start replication offset of the file */
+    long long     end_offset;    /* the end replication offset of the file */
 } aofInfo;
 
 typedef struct {
@@ -3044,6 +3046,8 @@ void aofOpenIfNeededOnServerStart(void);
 void aofManifestFree(aofManifest *am);
 int aofDelHistoryFiles(void);
 int aofRewriteLimited(void);
+void updateCurIncrAofEndOffset(void);
+void updateReplOffsetAndResetEndOffset(void);
 
 /* Child info */
 void openChildInfoPipe(void);

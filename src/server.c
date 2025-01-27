@@ -4585,6 +4585,9 @@ int finishShutdown(void) {
         }
     }
 
+    /* Update the end offset of current INCR AOF if possible. */
+    updateCurIncrAofEndOffset();
+
     /* Free the AOF manifest. */
     if (server.aof_manifest) aofManifestFree(server.aof_manifest);
 
@@ -7389,6 +7392,7 @@ int main(int argc, char **argv) {
         loadDataFromDisk();
         aofOpenIfNeededOnServerStart();
         aofDelHistoryFiles();
+        updateReplOffsetAndResetEndOffset();
         /* While loading data, we delay applying "appendonly" config change.
          * If there was a config change while we were inside loadDataFromDisk()
          * above, we'll apply it here. */
