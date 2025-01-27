@@ -30,6 +30,11 @@ aofManifest *aofLoadManifestFromFile(sds am_filepath);
 void aofManifestFreeAndUpdate(aofManifest *am);
 void aof_background_fsync_and_close(int fd);
 
+/* When we call 'startAppendOnly', we will create a temp INCR AOF, and rename
+ * it to the real INCR AOF name when the AOFRW is done, so if want to know the
+ * accurate start offset of the INCR AOF, we need to record it when we create
+ * the temp INCR AOF. This variable is used to record the start offset, and
+ * set the start offset of the real INCR AOF when the AOFRW is done. */
 static long long tempIncAofStartReplOffset = 0;
 
 /* ----------------------------------------------------------------------------
