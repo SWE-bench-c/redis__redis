@@ -14343,6 +14343,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RegisterNumericConfig);
     REGISTER_API(RegisterStringConfig);
     REGISTER_API(RegisterEnumConfig);
+    REGISTER_API(LoadDefaultConfigs);
     REGISTER_API(LoadConfigs);
     REGISTER_API(RegisterAuthCallback);
     REGISTER_API(RdbStreamCreateFromFile);
