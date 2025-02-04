@@ -3718,8 +3718,7 @@ void call(client *c, int flags) {
      * Other exceptions is a client which is unblocked and retrying to process the command
      * or we are currently in the process of loading AOF. */
     if (update_command_stats && !reprocessing_command   &&
-        !(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN)) &&
-        commandVisibleForClient(c, real_cmd))
+        !(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN)))
     {
         robj **argv = c->original_argv ? c->original_argv : c->argv;
         int argc = c->original_argv ? c->original_argc : c->argc;

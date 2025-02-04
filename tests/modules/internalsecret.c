@@ -57,7 +57,7 @@ int internall_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, R
                 return REDISMODULE_ERR;
             }
             // Dispatch the command with the detached context
-            rep = RedisModule_Call(detached_ctx, cmd, "vE", argv + 2, argc - 2);
+            rep = RedisModule_Call(detached_ctx, cmd, "vCE", argv + 2, argc - 2);
             break;
         case RM_CALL_REPLICATED:
             // Replicated call (verbatim), do not use the current client
@@ -96,11 +96,19 @@ int internal_rmcall(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return internall_rm_call(ctx, argv, argc, RM_CALL_REGULAR);
 }
 
+int noninternal_rmcall(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return internall_rm_call(ctx, argv, argc, RM_CALL_REGULAR);
+}
+
 int internal_rmcall_withuser(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return internall_rm_call(ctx, argv, argc, RM_CALL_WITHUSER);
 }
 
-int internal_rmcall_detachedcontext(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+int noninternal_rmcall_withuser(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    return internall_rm_call(ctx, argv, argc, RM_CALL_WITHUSER);
+}
+
+int noninternal_rmcall_detachedcontext_withuser(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return internall_rm_call(ctx, argv, argc, RM_CALL_WITHDETACHEDCLIENT);
 }
 
@@ -131,12 +139,20 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         internal_rmcall,"write internal",0,0,0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
+    if (RedisModule_CreateCommand(ctx,"internalauth.noninternal_rmcall",
+        noninternal_rmcall,"write",0,0,0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
     if (RedisModule_CreateCommand(ctx,"internalauth.internal_rmcall_withuser",
         internal_rmcall_withuser,"write internal",0,0,0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
-    if (RedisModule_CreateCommand(ctx,"internalauth.internal_rmcall_detachedcontext",
-        internal_rmcall_detachedcontext,"write internal",0,0,0) == REDISMODULE_ERR)
+    if (RedisModule_CreateCommand(ctx,"internalauth.noninternal_rmcall_withuser",
+        noninternal_rmcall_withuser,"write",0,0,0) == REDISMODULE_ERR)
+        return REDISMODULE_ERR;
+
+    if (RedisModule_CreateCommand(ctx,"internalauth.noninternal_rmcall_detachedcontext_withuser",
+        noninternal_rmcall_detachedcontext_withuser,"write",0,0,0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     if (RedisModule_CreateCommand(ctx,"internalauth.internal_rmcall_replicated",
