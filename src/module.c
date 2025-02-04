@@ -6446,8 +6446,8 @@ RedisModuleCallReply *RM_Call(RedisModuleCtx *ctx, const char *cmdname, const ch
      */
     c->cmd = c->lastcmd = c->realcmd = lookupCommand(c->argv,c->argc);
 
-    /* We nullify the command if it not supposed to be seen by the client, such
-     * that it will be rejected like an unknown command. */
+    /* We nullify the command if it is not supposed to be seen by the client,
+     * such that it will be rejected like an unknown command. */
     if (c->cmd &&
         (c->cmd->flags & CMD_INTERNAL) &&
         (flags & REDISMODULE_ARGV_RUN_AS_USER) &&

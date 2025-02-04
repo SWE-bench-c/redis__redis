@@ -28,7 +28,6 @@ TEST_MODULES = \
     basics.so \
     testrdb.so \
     fork.so \
-    internalsecret.so \
     infotest.so \
     propagate.so \
     misc.so \
@@ -64,7 +63,8 @@ TEST_MODULES = \
     postnotifications.so \
     moduleauthtwo.so \
     rdbloadsave.so \
-    crash.so
+    crash.so \
+    internalsecret.so
 
 .PHONY: all
 
