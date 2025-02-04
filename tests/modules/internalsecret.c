@@ -61,7 +61,7 @@ int call_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RMCall
             break;
         case RM_CALL_REPLICATED:
             // Replicated call (verbatim), do not use the current client
-            rep = RedisModule_Call(ctx, cmd, "vE", argv + 2, argc - 2);
+            rep = RedisModule_Call(ctx, cmd, "vE!", argv + 2, argc - 2);
     }
 
     if(!rep) {
@@ -81,8 +81,6 @@ int call_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RMCall
     } else {
         RedisModule_ReplyWithCallReply(ctx, rep);
         RedisModule_FreeCallReply(rep);
-        if (mode == RM_CALL_REPLICATED)
-            RedisModule_ReplicateVerbatim(ctx);
     }
 
     if (mode == RM_CALL_WITHDETACHEDCLIENT) {

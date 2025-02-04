@@ -18,9 +18,8 @@ start_cluster 1 0 [list config_lines $modules] {
         # seem non-existent to it.
         assert_error {*unknown command*} {r internalauth.internalcommand}
 
-        # Authentication flow
-        set reply [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $reply]
+        # Authenticate as an internal connection
+        assert_equal {OK} [r debug mark-internal-client]
 
         # Now, internal commands are available.
         assert_equal {OK} [r internalauth.internalcommand]
@@ -50,8 +49,8 @@ start_server {} {
     }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set r [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     test {Test `COMMAND *` commands with\without internal connections} {
         # ------------------ Non-internal connection ------------------
@@ -67,8 +66,7 @@ start_cluster 1 0 [list config_lines $modules] {
 
         # -------------------- Internal connection --------------------
         # Non-empty response for non-internal connections.
-        set reply [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $reply]
+        assert_equal {OK} [r debug mark-internal-client]
 
         # `COMMAND DOCS <cmd>` returns a correct response.
         assert_match {*internalauth.internalcommand*} [r command docs internalauth.internalcommand]
@@ -82,23 +80,22 @@ start_cluster 1 0 [list config_lines $modules] {
     }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set r [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     test {No authentication needed for internal connections} {
         # Authenticate with a user that does not have permissions to any command
-        r acl setuser David on >123 &* ~* -@all +auth +internalauth.getinternalsecret
+        r acl setuser David on >123 &* ~* -@all +auth +internalauth.getinternalsecret +debug +internalauth.internalcommand
         assert_equal {OK} [r auth David 123]
 
-        set reply [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $reply]
+        assert_equal {OK} [r debug mark-internal-client]
         # Execute a command for which David does not have permission
         assert_equal {OK} [r internalauth.internalcommand]
     }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set r [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     test {RM_Call of internal commands without user-flag succeeds only for all connections} {
         # Fail before authenticating as an internal connection.
@@ -113,23 +110,30 @@ start_cluster 1 0 [list config_lines $modules] {
         # with a user flag should fail.
         assert_error {*unknown command*} {r internalauth.noninternal_rmcall_withuser internalauth.internalcommand}
     }
+
+    test {Internal connections override the user flag} {
+        # Authenticate as an internal connection
+        assert_equal {OK} [r debug mark-internal-client]
+
+        assert_equal {OK} [r internalauth.noninternal_rmcall internalauth.internalcommand]
+        assert_equal {OK} [r internalauth.noninternal_rmcall_withuser internalauth.internalcommand]
+    }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set r [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     test {RM_Call with the user-flag after setting thread-safe-context from an internal connection should fail} {
         # Authenticate as an internal connection
-        set secret [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $secret]
+        assert_equal {OK} [r debug mark-internal-client]
 
         # New threadSafeContexts do not inherit the internal flag.
         assert_error {*unknown command*} {r internalauth.noninternal_rmcall_detachedcontext_withuser internalauth.internalcommand}
     }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set r [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     r config set appendonly yes
     r config set appendfsync always
@@ -137,8 +141,7 @@ start_cluster 1 0 [list config_lines $modules] {
 
     test {AOF executes internal commands successfully} {
         # Authenticate as an internal connection
-        set reply [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $reply]
+        assert_equal {OK} [r debug mark-internal-client]
 
         # Call an internal writing command
         assert_equal {OK} [r internalauth.internal_rmcall_replicated set x 5]
@@ -151,16 +154,15 @@ start_cluster 1 0 [list config_lines $modules] {
     }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set r [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     test {Internal commands are not allowed from scripts} {
         # Internal commands are not allowed from scripts
         assert_error {*not allowed from script*} {r eval {redis.call('internalauth.internalcommand')} 0}
 
         # Even after authenticating as an internal connection
-        set reply [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $reply]
+        assert_equal {OK} [r debug mark-internal-client]
         assert_error {*not allowed from script*} {r eval {redis.call('internalauth.internalcommand')} 0}
     }
 }
@@ -199,8 +201,8 @@ start_cluster 1 1 [list config_lines $modules] {
     }
 }
 
-start_cluster 1 0 [list config_lines $modules] {
-    set master [srv 0 client]
+start_server {} {
+    r module load $testmodule
 
     test {Internal commands are not reported in the monitor output for non-internal connections when unsuccessful} {
         set rd [redis_deferring_client]
@@ -216,8 +218,7 @@ start_cluster 1 0 [list config_lines $modules] {
 
     test {Internal commands are not reported in the monitor output for non-internal connections when successful} {
         # Authenticate as an internal connection
-        set secret [r internalauth.getinternalsecret]
-        assert_equal {OK} [r auth "internal connection" $secret]
+        assert_equal {OK} [r debug mark-internal-client]
 
         set rd [redis_deferring_client]
         $rd monitor
@@ -232,8 +233,7 @@ start_cluster 1 0 [list config_lines $modules] {
 
     test {Internal commands are reported in the monitor output for internal connections} {
         set rd [redis_deferring_client]
-        set secret [r internalauth.getinternalsecret]
-        $rd auth "internal connection" $secret
+        $rd debug mark-internal-client
         assert_equal {OK} [$rd read]
         $rd monitor
         $rd read ; # Discard the OK
