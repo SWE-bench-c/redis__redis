@@ -1017,7 +1017,6 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             serverPanic("Unknown list encoding");
         }
     } else if (o->type == OBJ_SET) {
-
         if (o->encoding == OBJ_ENCODING_HT) {
             d = o->ptr;
             di = dictGetIterator(d);
