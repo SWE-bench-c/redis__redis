@@ -518,7 +518,8 @@ class Subcommand(Command):
 
 def create_command(name, desc):
     flags = desc.get("command_flags")
-    if flags and "EXPERIMENTAL" in flags:
+    
+    if (not args.with_experimental_cmds) and (flags and "EXPERIMENTAL" in flags):
         print("Command %s is experimental, skipping..." % name)
         return
 
@@ -537,6 +538,7 @@ srcdir = os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + "/../src")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--with-reply-schema', action='store_true')
+parser.add_argument('--with-experimental-cmds', action='store_true')
 args = parser.parse_args()
 
 # Create all command objects
