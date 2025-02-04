@@ -32,7 +32,7 @@ typedef enum {
     RM_CALL_REPLICATED = 3
 } RMCallMode;
 
-int internall_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RMCallMode mode) {
+int call_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, RMCallMode mode) {
     if(argc < 2){
         return RedisModule_WrongArity(ctx);
     }
@@ -43,7 +43,7 @@ int internall_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, R
     switch (mode) {
         case RM_CALL_REGULAR:
             // Regular call, with the unrestricted user.
-            rep = RedisModule_Call(ctx, cmd, "v", argv + 2, argc - 2);
+            rep = RedisModule_Call(ctx, cmd, "vE", argv + 2, argc - 2);
             break;
         case RM_CALL_WITHUSER:
             // Simply call the command with the current client.
@@ -93,27 +93,23 @@ int internall_rm_call(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, R
 }
 
 int internal_rmcall(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    return internall_rm_call(ctx, argv, argc, RM_CALL_REGULAR);
+    return call_rm_call(ctx, argv, argc, RM_CALL_REGULAR);
 }
 
 int noninternal_rmcall(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    return internall_rm_call(ctx, argv, argc, RM_CALL_REGULAR);
-}
-
-int internal_rmcall_withuser(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    return internall_rm_call(ctx, argv, argc, RM_CALL_WITHUSER);
+    return call_rm_call(ctx, argv, argc, RM_CALL_REGULAR);
 }
 
 int noninternal_rmcall_withuser(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    return internall_rm_call(ctx, argv, argc, RM_CALL_WITHUSER);
+    return call_rm_call(ctx, argv, argc, RM_CALL_WITHUSER);
 }
 
 int noninternal_rmcall_detachedcontext_withuser(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    return internall_rm_call(ctx, argv, argc, RM_CALL_WITHDETACHEDCLIENT);
+    return call_rm_call(ctx, argv, argc, RM_CALL_WITHDETACHEDCLIENT);
 }
 
 int internal_rmcall_replicated(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    return internall_rm_call(ctx, argv, argc, RM_CALL_REPLICATED);
+    return call_rm_call(ctx, argv, argc, RM_CALL_REPLICATED);
 }
 
 /* This function must be present on each Redis module. It is used in order to
@@ -141,10 +137,6 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 
     if (RedisModule_CreateCommand(ctx,"internalauth.noninternal_rmcall",
         noninternal_rmcall,"write",0,0,0) == REDISMODULE_ERR)
-        return REDISMODULE_ERR;
-
-    if (RedisModule_CreateCommand(ctx,"internalauth.internal_rmcall_withuser",
-        internal_rmcall_withuser,"write internal",0,0,0) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
 
     if (RedisModule_CreateCommand(ctx,"internalauth.noninternal_rmcall_withuser",
