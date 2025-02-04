@@ -3717,7 +3717,7 @@ void call(client *c, int flags) {
      * since some administrative commands are considered too dangerous to be shown.
      * Other exceptions is a client which is unblocked and retrying to process the command
      * or we are currently in the process of loading AOF. */
-    if (update_command_stats && !reprocessing_command   &&
+    if (update_command_stats && !reprocessing_command &&
         !(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN)))
     {
         robj **argv = c->original_argv ? c->original_argv : c->argv;
