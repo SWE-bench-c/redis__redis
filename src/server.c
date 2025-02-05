@@ -6826,6 +6826,7 @@ void loadDataFromDisk(void) {
             exit(1);
         if (ret != AOF_NOT_EXIST)
             serverLog(LL_NOTICE, "DB loaded from append only file: %.3f seconds", (float)(ustime()-start)/1000000);
+        updateReplOffsetAndResetEndOffset();
     } else {
         rdbSaveInfo rsi = RDB_SAVE_INFO_INIT;
         int rsi_is_valid = 0;
@@ -7392,7 +7393,6 @@ int main(int argc, char **argv) {
         loadDataFromDisk();
         aofOpenIfNeededOnServerStart();
         aofDelHistoryFiles();
-        updateReplOffsetAndResetEndOffset();
         /* While loading data, we delay applying "appendonly" config change.
          * If there was a config change while we were inside loadDataFromDisk()
          * above, we'll apply it here. */

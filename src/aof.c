@@ -887,7 +887,7 @@ void updateReplOffsetAndResetEndOffset(void) {
     /* If the INCR file has an end offset, we directly use it, and clear it
      * to avoid the next time we load the manifest file, we will use the same
      * offset, but the real offset may have advanced. */
-    serverAssert(listLength(server.aof_manifest->incr_aof_list) > 0);
+    if (listLength(server.aof_manifest->incr_aof_list) == 0) return;
     aofInfo *ai = listNodeValue(listLast(server.aof_manifest->incr_aof_list));
     if (ai->end_offset != -1) {
         server.master_repl_offset = ai->end_offset;

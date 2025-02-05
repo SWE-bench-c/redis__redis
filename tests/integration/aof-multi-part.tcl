@@ -1329,4 +1329,184 @@ tags {"external:skip"} {
             }
         }
     }
+
+    # Test Part 3
+    #
+    # Test if INCR AOF offset information is as expected
+    test {Multi Part AOF writes start offset in the manifest} {
+        set aof_dirpath "$server_path/$aof_dirname"
+        set aof_manifest_file "$server_path/$aof_dirname/${aof_basename}$::manifest_suffix"
+
+        start_server_aof [list dir $server_path] {
+            set client [redis [srv host] [srv port] 0 $::tls]
+            wait_done_loading $client
+
+            assert_aof_manifest_content $aof_manifest_file {
+                {file appendonly.aof.1.base.rdb seq 1 type b}
+                {file appendonly.aof.1.incr.aof seq 1 type i startoffset 0}
+            }
+        }
+
+        clean_aof_persistence $aof_dirpath
+    }
+
+    test {Multi Part AOF won't add the offset of incr AOF from old version} {
+        create_aof $aof_dirpath $aof_base1_file {
+            append_to_aof [formatCommand set k1 v1]
+        }
+
+        create_aof $aof_dirpath $aof_incr1_file {
+            append_to_aof [formatCommand set k2 v2]
+        }
+
+        create_aof_manifest $aof_dirpath $aof_manifest_file {
+            append_to_manifest "file appendonly.aof.1.base.aof seq 1 type b\n"
+            append_to_manifest "file appendonly.aof.1.incr.aof seq 1 type i\n"
+        }
+
+        start_server_aof [list dir $server_path] {
+            assert_equal 1 [is_alive [srv pid]]
+            set client [redis [srv host] [srv port] 0 $::tls]
+            wait_done_loading $client
+
+            assert_equal v1 [$client get k1]
+            assert_equal v2 [$client get k2]
+
+            $client set k3 v3
+            catch {$client shutdown}
+
+            # Should not add offset to the manifest
+            set fp [open $aof_manifest_file r]
+            set content [read $fp]
+            close $fp
+            assert ![regexp {startoffset} $content]
+
+            assert_aof_manifest_content $aof_manifest_file  {
+                {file appendonly.aof.1.base.aof seq 1 type b}
+                {file appendonly.aof.1.incr.aof seq 1 type i}
+            }
+        }
+
+        clean_aof_persistence $aof_dirpath
+    }
+
+    test {Multi Part AOF can update master_repl_offset with only startoffset info} {
+        create_aof $aof_dirpath $aof_base1_file {
+            append_to_aof [formatCommand set k1 v1]
+        }
+
+        create_aof $aof_dirpath $aof_incr1_file {
+            append_to_aof [formatCommand set k2 v2]
+        }
+
+        create_aof_manifest $aof_dirpath $aof_manifest_file {
+            append_to_manifest "file appendonly.aof.1.base.aof seq 1 type b\n"
+            append_to_manifest "file appendonly.aof.1.incr.aof seq 1 type i startoffset 100\n"
+        }
+
+        start_server [list overrides [list dir $server_path appendonly yes ]] {
+            wait_done_loading r
+            r select 0
+            assert_equal v1 [r get k1]
+            assert_equal v2 [r get k2]
+
+            # Get repl offset by stat offset plus file size
+            set file_size [file size $aof_incr1_file]
+            set offset [expr $file_size + 100]
+            assert_equal $offset [s master_repl_offset]
+        }
+
+        clean_aof_persistence $aof_dirpath
+    }
+
+    test {Multi Part AOF can update master_repl_offset with endoffset info} {
+        create_aof $aof_dirpath $aof_base1_file {
+            append_to_aof [formatCommand set k1 v1]
+        }
+
+        create_aof $aof_dirpath $aof_incr1_file {
+            append_to_aof [formatCommand set k2 v2]
+        }
+
+        create_aof_manifest $aof_dirpath $aof_manifest_file {
+            append_to_manifest "file appendonly.aof.1.base.aof seq 1 type b\n"
+            append_to_manifest "file appendonly.aof.1.incr.aof seq 1 type i startoffset 100 endoffset 200\n"
+        }
+
+        start_server [list overrides [list dir $server_path appendonly yes ]] {
+            wait_done_loading r
+            r select 0
+            assert_equal v1 [r get k1]
+            assert_equal v2 [r get k2]
+
+            # Get repl offset by end offset
+            assert_equal 200 [s master_repl_offset]
+        }
+
+        clean_aof_persistence $aof_dirpath
+    }
+
+    test {Multi Part AOF will add the end offset if we close gracefully the AOF} {
+        start_server_aof [list dir $server_path] {
+            set client [redis [srv host] [srv port] 0 $::tls]
+            wait_done_loading $client
+
+            assert_aof_manifest_content $aof_manifest_file {
+                {file appendonly.aof.1.base.rdb seq 1 type b}
+                {file appendonly.aof.1.incr.aof seq 1 type i startoffset 0}
+            }
+
+            $client set k1 v1
+            $client set k2 v2
+
+            r config set appendonly no
+            assert_aof_manifest_content $aof_manifest_file {
+                {file appendonly.aof.1.base.rdb seq 1 type b}
+                {file appendonly.aof.1.incr.aof seq 1 type i startoffset 0 endoffset 2}
+            }
+            r config set appendonly yes
+            waitForBgrewriteaof $client
+
+            $client set k3 v3
+            catch {$client shutdown}
+            assert_aof_manifest_content $aof_manifest_file {
+                {file appendonly.aof.2.base.rdb seq 2 type b}
+                {file appendonly.aof.2.incr.aof seq 2 type i startoffset 2 endoffset 3}
+            }
+        }
+
+        clean_aof_persistence $aof_dirpath
+    }
+
+    test {INCR AOF has accurate start offset when AOFRW} {
+        start_server [list overrides [list dir $server_path appendonly yes ]] {
+            r config set auto-aof-rewrite-percentage 0
+
+            # Start write load
+            set load_handle0 [start_write_load [srv 0 host] [srv 0 port] 10]
+            wait_for_condition 50 100 {
+                [r dbsize] > 0
+            } else {
+                fail "No write load detected."
+            }
+
+            # Get the master_repl_offset when trigger bgrewriteaof
+            r config set appendonly no
+            set offset1 [s master_repl_offset]
+            r config set appendonly yes
+
+            # Get the start offset from the manifest file after bgrewriteaof
+            waitForBgrewriteaof r
+            set fp [open $aof_manifest_file r]
+            set content [read $fp]
+            close $fp
+            set offset2 [lindex [regexp -inline {startoffset (\d+)} $content] 1]
+
+            # The start offset of INCR AOF should be the same as master_repl_offset
+            # when we trigger bgrewriteaof
+            assert {$offset1 == $offset2}
+            stop_write_load $load_handle0
+            wait_load_handlers_disconnected
+        }
+    }
 }
