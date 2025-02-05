@@ -3993,8 +3993,9 @@ int processCommand(client *c) {
     if (!client_reprocessing_command) {
         /* check if we can reuse the last command instead of looking up if we already have that info */
         struct redisCommand *cmd = NULL;
-        if (c->lastcmd!=NULL && c->lastcmd->subcommands_dict==NULL
-                             && strcasecmp(c->lastcmd->fullname,c->argv[0]->ptr)==0){
+        if (c->lastcmd != NULL && c->lastcmd->subcommands_dict == NULL
+            && strcasecmp(c->lastcmd->fullname,c->argv[0]->ptr) == 0)
+        {
             cmd = c->lastcmd;
         } else {
             cmd =  c->iolookedcmd ? c->iolookedcmd : lookupCommand(c->argv, c->argc);
