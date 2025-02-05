@@ -208,11 +208,13 @@ typedef struct RedisModuleStreamID {
 #define REDISMODULE_CTX_FLAGS_ASYNC_LOADING (1<<23)
 /* Redis is starting. */
 #define REDISMODULE_CTX_FLAGS_SERVER_STARTUP (1<<24)
+/* This context can call execute debug commands. */
+#define REDISMODULE_CTX_FLAGS_DEBUG_ENABLED (1<<25)
 
 /* Next context flag, must be updated when adding new flags above!
 This flag should not be used directly by the module.
  * Use RedisModule_GetContextFlagsAll instead. */
-#define _REDISMODULE_CTX_FLAGS_NEXT (1<<25)
+#define _REDISMODULE_CTX_FLAGS_NEXT (1<<26)
 
 /* Keyspace changes notification classes. Every class is associated with a
  * character for configuration purposes.
@@ -1325,6 +1327,7 @@ REDISMODULE_API RedisModuleRdbStream *(*RedisModule_RdbStreamCreateFromFile)(con
 REDISMODULE_API void (*RedisModule_RdbStreamFree)(RedisModuleRdbStream *stream) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_RdbLoad)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_RdbSave)(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) REDISMODULE_ATTR;
+REDISMODULE_API const char * (*RedisModule_GetInternalSecret)(RedisModuleCtx *ctx, size_t *len) REDISMODULE_ATTR;
 
 #define RedisModule_IsAOFClient(id) ((id) == UINT64_MAX)
 
@@ -1696,6 +1699,7 @@ static int RedisModule_Init(RedisModuleCtx *ctx, const char *name, int ver, int 
     REDISMODULE_GET_API(RdbStreamFree);
     REDISMODULE_GET_API(RdbLoad);
     REDISMODULE_GET_API(RdbSave);
+    REDISMODULE_GET_API(GetInternalSecret);
 
     if (RedisModule_IsModuleNameBusy && RedisModule_IsModuleNameBusy(name)) return REDISMODULE_ERR;
     RedisModule_SetModuleAttribs(ctx,name,ver,apiver);

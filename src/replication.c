@@ -660,6 +660,10 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
     listRewind(monitors,&li);
     while((ln = listNext(&li))) {
         client *monitor = ln->value;
+        /* Do not show internal commands to non-internal clients. */
+        if (c->realcmd && (c->realcmd->flags & CMD_INTERNAL) && !(monitor->flags & CLIENT_INTERNAL)) {
+            continue;
+        }
         addReply(monitor,cmdobj);
         updateClientMemUsageAndBucket(monitor);
     }
@@ -2444,6 +2448,14 @@ void readSyncBulkPayload(connection *conn) {
     /* Send the initial ACK immediately to put this replica in online state. */
     if (usemark) replicationSendAck();
 
+    /* Restart the AOF subsystem now that we finished the sync. This
+     * will trigger an AOF rewrite, and when done will start appending
+     * to the new file. */
+    if (server.aof_enabled) {
+        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Starting AOF after a successful sync");
+        startAppendOnlyWithRetry();
+    }
+
     if (rdbchannel) {
         int close_asap;
 
@@ -2465,13 +2477,6 @@ void readSyncBulkPayload(connection *conn) {
             freeClientAsync(server.master);
     }
 
-    /* Restart the AOF subsystem now that we finished the sync. This
-     * will trigger an AOF rewrite, and when done will start appending
-     * to the new file. */
-    if (server.aof_enabled) {
-        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Starting AOF after a successful sync");
-        startAppendOnlyWithRetry();
-    }
     return;
 
 error:
@@ -3671,6 +3676,7 @@ static void rdbChannelReplDataBufInit(void) {
     serverAssert(server.repl_full_sync_buffer.blocks == NULL);
     server.repl_full_sync_buffer.size = 0;
     server.repl_full_sync_buffer.used = 0;
+    server.repl_full_sync_buffer.mem_used = 0;
     server.repl_full_sync_buffer.blocks = listCreate();
     server.repl_full_sync_buffer.blocks->free = zfree;
 }
@@ -3682,6 +3688,7 @@ static void rdbChannelReplDataBufFree(void) {
     server.repl_full_sync_buffer.blocks = NULL;
     server.repl_full_sync_buffer.size = 0;
     server.repl_full_sync_buffer.used = 0;
+    server.repl_full_sync_buffer.mem_used = 0;
 }
 
 /* Replication: Replica side.
@@ -3752,6 +3759,7 @@ void rdbChannelBufferReplData(connection *conn) {
 
         listAddNodeTail(server.repl_full_sync_buffer.blocks, tail);
         server.repl_full_sync_buffer.size += tail->size;
+        server.repl_full_sync_buffer.mem_used += usable_size + sizeof(listNode);
 
         /* Update buffer's peak */
         if (server.repl_full_sync_buffer.peak < server.repl_full_sync_buffer.size)
@@ -3791,7 +3799,8 @@ int rdbChannelStreamReplDataToDb(client *c) {
 
         server.repl_full_sync_buffer.used -= used;
         server.repl_full_sync_buffer.size -= size;
-
+        server.repl_full_sync_buffer.mem_used -= (size + sizeof(listNode) +
+                                                    sizeof(replDataBufBlock));
         if (server.repl_debug_pause & REPL_DEBUG_ON_STREAMING_REPL_BUF)
             debugPauseProcess();
 

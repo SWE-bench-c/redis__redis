@@ -1151,6 +1151,7 @@ int64_t commandFlagsFromString(char *s) {
         else if (!strcasecmp(t,"no-cluster")) flags |= CMD_MODULE_NO_CLUSTER;
         else if (!strcasecmp(t,"no-mandatory-keys")) flags |= CMD_NO_MANDATORY_KEYS;
         else if (!strcasecmp(t,"allow-busy")) flags |= CMD_ALLOW_BUSY;
+        else if (!strcasecmp(t, "internal")) flags |= (CMD_INTERNAL|CMD_NOSCRIPT); /* We also disallow internal commands in scripts. */
         else break;
     }
     sdsfreesplitres(tokens,count);
@@ -1235,6 +1236,9 @@ RedisModuleCommand *moduleCreateCommandProxy(struct RedisModule *module, sds dec
  *                     RM_Yield.
  * * **"getchannels-api"**: The command implements the interface to return
  *                          the arguments that are channels.
+ * * **"internal"**: Internal command, one that should not be exposed to the user connections.
+ *                   For example, module commands that are called by the modules,
+ *                   commands that do not perform ACL validations (relying on earlier checks)
  *
  * The last three parameters specify which arguments of the new command are
  * Redis keys. See https://redis.io/commands/command for more information.
@@ -3901,6 +3905,9 @@ int RM_GetSelectedDb(RedisModuleCtx *ctx) {
  *                                 context is using RESP3.
  *
  *  * REDISMODULE_CTX_FLAGS_SERVER_STARTUP: The Redis instance is starting
+ *
+ *  * REDISMODULE_CTX_FLAGS_DEBUG_ENABLED: Debug commands are enabled for this
+ *                                         context.
  */
 int RM_GetContextFlags(RedisModuleCtx *ctx) {
     int flags = 0;
@@ -3922,6 +3929,9 @@ int RM_GetContextFlags(RedisModuleCtx *ctx) {
         client *c = ctx->blocked_client ? ctx->blocked_client->client : ctx->client;
         if (c && (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC))) {
             flags |= REDISMODULE_CTX_FLAGS_MULTI_DIRTY;
+        }
+        if (c && allowProtectedAction(server.enable_debug_cmd, c)) {
+            flags |= REDISMODULE_CTX_FLAGS_DEBUG_ENABLED;
         }
     }
 
@@ -3989,6 +3999,11 @@ int RM_GetContextFlags(RedisModuleCtx *ctx) {
     /* Non-empty server.loadmodule_queue means that Redis is starting. */
     if (listLength(server.loadmodule_queue) > 0)
         flags |= REDISMODULE_CTX_FLAGS_SERVER_STARTUP;
+
+    /* If debug commands are completely enabled */
+    if (server.enable_debug_cmd == PROTECTED_ACTION_ALLOWED_YES) {
+        flags |= REDISMODULE_CTX_FLAGS_DEBUG_ENABLED;
+    }
 
     return flags;
 }
@@ -6284,6 +6299,8 @@ fmterr:
  *              dependent activity, such as ACL checks within scripts will proceed as
  *              expected.
  *              Otherwise, the command will run as the Redis unrestricted user.
+ *              Upon sending a command from an internal connection, this flag is
+ *              ignored and the command will run as the Redis unrestricted user.
  *     * `S` -- Run the command in a script mode, this means that it will raise
  *              an error if a command which are not allowed inside a script
  *              (flagged with the `deny-script` flag) is invoked (like SHUTDOWN).
@@ -6392,8 +6409,12 @@ RedisModuleCallReply *RM_Call(RedisModuleCtx *ctx, const char *cmdname, const ch
     }
     if (ctx->module) ctx->module->in_call++;
 
+    /* Attach the user of the context or client.
+     * Internal connections always run with the unrestricted user. */
     user *user = NULL;
-    if (flags & REDISMODULE_ARGV_RUN_AS_USER) {
+    if ((flags & REDISMODULE_ARGV_RUN_AS_USER) &&
+        !(ctx->client->flags & CLIENT_INTERNAL))
+    {
         user = ctx->user ? ctx->user->user : ctx->client->user;
         if (!user) {
             errno = ENOTSUP;
@@ -6424,6 +6445,17 @@ RedisModuleCallReply *RM_Call(RedisModuleCtx *ctx, const char *cmdname, const ch
      * if necessary.
      */
     c->cmd = c->lastcmd = c->realcmd = lookupCommand(c->argv,c->argc);
+
+    /* We nullify the command if it is not supposed to be seen by the client,
+     * such that it will be rejected like an unknown command. */
+    if (c->cmd &&
+        (c->cmd->flags & CMD_INTERNAL) &&
+        (flags & REDISMODULE_ARGV_RUN_AS_USER) &&
+        !((ctx->client->flags & CLIENT_INTERNAL) || mustObeyClient(ctx->client)))
+    {
+        c->cmd = c->lastcmd = c->realcmd = NULL;
+    }
+
     sds err;
     if (!commandCheckExistence(c, error_as_call_replies? &err : NULL)) {
         errno = ENOENT;
@@ -6544,7 +6576,9 @@ RedisModuleCallReply *RM_Call(RedisModuleCtx *ctx, const char *cmdname, const ch
      *
      * If RM_SetContextUser has set a user, that user is used, otherwise
      * use the attached client's user. If there is no attached client user and no manually
-     * set user, an error will be returned */
+     * set user, an error will be returned.
+     * An internal command should only succeed for an internal connection, AOF,
+     * and master commands. */
     if (flags & REDISMODULE_ARGV_RUN_AS_USER) {
         int acl_errpos;
         int acl_retval;
@@ -13378,6 +13412,17 @@ int RM_RdbSave(RedisModuleCtx *ctx, RedisModuleRdbStream *stream, int flags) {
     return REDISMODULE_OK;
 }
 
+/* Returns the internal secret of the cluster.
+ * Should be used to authenticate as an internal connection to a node in the
+ * cluster, and by that gain the permissions to execute internal commands.
+ */
+const char* RM_GetInternalSecret(RedisModuleCtx *ctx, size_t *len) {
+    UNUSED(ctx);
+    serverAssert(len != NULL);
+    const char *secret = clusterGetSecret(len);
+    return secret;
+}
+
 /* Redis MODULE command.
  *
  * MODULE LIST
@@ -14319,4 +14364,5 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbStreamFree);
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
+    REGISTER_API(GetInternalSecret);
 }
