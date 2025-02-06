@@ -2538,6 +2538,7 @@ int processMultibulkBuffer(client *c) {
                  * at this time the querybuf contains not only our bulk. */
                 if (querybuf_len-c->qb_pos <= (size_t)ll+2) {
                     sdsrange(c->querybuf,c->qb_pos,-1);
+                    querybuf_len = sdslen(c->querybuf);
                     c->qb_pos = 0;
                     /* Hint the sds library about the amount of bytes this string is
                      * going to contain. */
