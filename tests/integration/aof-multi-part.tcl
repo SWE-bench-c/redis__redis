@@ -1441,6 +1441,12 @@ tags {"external:skip"} {
 
             # Get repl offset by end offset
             assert_equal 200 [s master_repl_offset]
+
+            # We should reset endoffset in manifest file
+            set fp [open $aof_manifest_file r]
+            set content [read $fp]
+            close $fp
+            assert ![regexp {endoffset} $content]
         }
 
         clean_aof_persistence $aof_dirpath
