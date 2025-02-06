@@ -38,8 +38,8 @@ typedef enum {
 keyStatus expireIfNeeded(redisDb *db, robj *key, int flags, const int keySlot);
 int keyIsExpired(redisDb *db, robj *key);
 static void dbSetValue(redisDb *db, robj *key, robj *val, int overwrite, dictEntry *de);
-static __always_inline dictEntry *dbFindWithKeySlot(redisDb *db, void *key, int keySlot);
-static __always_inline dictEntry *dbFindExpiresWithKeySlot(redisDb *db, void *key, int keySlot);
+static inline dictEntry *dbFindWithKeySlot(redisDb *db, void *key, int keySlot);
+static inline dictEntry *dbFindExpiresWithKeySlot(redisDb *db, void *key, int keySlot);
 
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
@@ -2048,7 +2048,7 @@ void setExpireWithDictEntry(client *c, redisDb *db, robj *key, long long when, d
 
 /* Return the expire time of the specified key, or -1 if no expire
  * is associated with this key (i.e. the key is non volatile) */
-static __always_inline long getExpireWithSlot(redisDb *db, robj *key, int keySlot) {
+static inline long getExpireWithSlot(redisDb *db, robj *key, int keySlot) {
     dictEntry *de;
 
     if ((de = dbFindExpiresWithKeySlot(db, key->ptr, keySlot)) == NULL)
@@ -2175,7 +2175,7 @@ void propagateDeletion(redisDb *db, robj *key, int lazy) {
 }
 
 /* Check if the key is expired. */
-static __always_inline int keyIsExpiredWithSlot(redisDb *db, robj *key, int keySlot) {
+static inline int keyIsExpiredWithSlot(redisDb *db, robj *key, int keySlot) {
     /* Don't expire anything while loading. It will be done later. */
     if (unlikely(server.loading)) return 0;
 
@@ -2321,7 +2321,7 @@ int dbExpandExpires(redisDb *db, uint64_t db_size, int try_expand) {
     return dbExpandGeneric(db->expires, db_size, try_expand);
 }
 
-static __always_inline dictEntry *dbFindGenericWithKeySlot(kvstore *kvs, void *key, int keySlot) {
+static inline dictEntry *dbFindGenericWithKeySlot(kvstore *kvs, void *key, int keySlot) {
     return kvstoreDictFind(kvs, keySlot, key);
 }
 
@@ -2333,11 +2333,11 @@ dictEntry *dbFind(redisDb *db, void *key) {
     return dbFindGeneric(db->keys, key);
 }
 
-static __always_inline dictEntry *dbFindWithKeySlot(redisDb *db, void *key, int keySlot) {
+static inline dictEntry *dbFindWithKeySlot(redisDb *db, void *key, int keySlot) {
     return dbFindGenericWithKeySlot(db->keys, key, keySlot);
 }
 
-static __always_inline dictEntry *dbFindExpiresWithKeySlot(redisDb *db, void *key, int keySlot) {
+static inline dictEntry *dbFindExpiresWithKeySlot(redisDb *db, void *key, int keySlot) {
     return dbFindGenericWithKeySlot(db->expires, key, keySlot);
 }
 
