@@ -3169,7 +3169,7 @@ version,tls_usage);
     fprintf(target,
 "  --bigkeys          Sample Redis keys looking for keys with many elements (complexity).\n"
 "  --memkeys          Sample Redis keys looking for keys consuming a lot of memory.\n"
-"  --memkeys-samples  <n> Sample Redis keys looking for keys consuming a lot of memory.\n"
+"  --memkeys-samples <n> Sample Redis keys looking for keys consuming a lot of memory.\n"
 "                     And define number of key elements to sample\n"
 "  --keystats         Sample Redis keys looking for keys memory size and length (combine bigkeys and memkeys).\n"
 "  --keystats-samples <n> Sample Redis keys looking for keys memory size and length.\n"
