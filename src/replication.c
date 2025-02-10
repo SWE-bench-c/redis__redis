@@ -4482,8 +4482,6 @@ long long replicationGetSlaveOffset(void) {
 
 /* Replication cron function, called 1 time per second. */
 void replicationCron(void) {
-    static long long replication_cron_loops = 0;
-
     /* Check failover status first, to see if we need to start
      * handling the failover. */
     updateFailoverStatus();
@@ -4540,8 +4538,7 @@ void replicationCron(void) {
      * sends PING is to keep the connection with replica active, so master need
      * not send PING to replicas if already sent replication stream in the past
      * repl_ping_slave_period time. */
-    if ((replication_cron_loops % server.repl_ping_slave_period) == 0 &&
-        server.masterhost == NULL && listLength(server.slaves) &&
+    if (server.masterhost == NULL && listLength(server.slaves) &&
         server.unixtime >= server.repl_stream_lastio + server.repl_ping_slave_period)
     {
         /* Note that we don't send the PING if the clients are paused during
@@ -4679,7 +4676,6 @@ void replicationCron(void) {
 
     /* Refresh the number of slaves with lag <= min-slaves-max-lag. */
     refreshGoodSlavesCount();
-    replication_cron_loops++; /* Incremented with frequency 1 HZ. */
 }
 
 int shouldStartChildReplication(int *mincapa_out, int *req_out) {
