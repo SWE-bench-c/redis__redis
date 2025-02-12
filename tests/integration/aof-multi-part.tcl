@@ -1500,10 +1500,19 @@ tags {"external:skip"} {
                 fail "No write load detected."
             }
 
-            # Get the master_repl_offset when trigger bgrewriteaof
-            r config set appendonly no
-            set offset1 [s master_repl_offset]
-            r config set appendonly yes
+            # We obtain the master_repl_offset at the time of bgrewriteaof by pausing
+            # the redis process, sending pipeline commands, and then resuming the process
+            set rd [redis_deferring_client]
+            pause_process [srv 0 pid]
+            set buf "info replication\r\n"
+            append buf "bgrewriteaof\r\n"
+            $rd write $buf
+            $rd flushq
+            resume_process [srv 0 pid]
+            # Read the replication offset and the start of the bgrewriteaof
+            regexp {master_repl_offset:(\d+)} [$rd read] -> offset1
+            assert_match {*rewriting started*} [$rd read]
+            $rd close
 
             # Get the start offset from the manifest file after bgrewriteaof
             waitForBgrewriteaof r
