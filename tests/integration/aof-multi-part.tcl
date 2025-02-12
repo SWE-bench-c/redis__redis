@@ -1507,7 +1507,7 @@ tags {"external:skip"} {
             set buf "info replication\r\n"
             append buf "bgrewriteaof\r\n"
             $rd write $buf
-            $rd flushq
+            $rd flush
             resume_process [srv 0 pid]
             # Read the replication offset and the start of the bgrewriteaof
             regexp {master_repl_offset:(\d+)} [$rd read] -> offset1
