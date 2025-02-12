@@ -2905,10 +2905,9 @@ void hgetexCommand(client *c) {
                 decrRefCount(expire);
             }
         }
-    } else {
+    } else if (deleted) {
         /* If we are here, fields are deleted because new timestamp was in the
          * past. HDELs are already propagated as part of hashTypeSetEx(). */
-        serverAssert(deleted != 0);
         notifyKeyspaceEvent(NOTIFY_HASH, "hdel", c->argv[1], c->db->id);
         preventCommandPropagation(c);
     }

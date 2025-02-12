@@ -1021,6 +1021,18 @@ start_server {tags {"external:skip needs:debug"}} {
             assert_not_equal [r httl myhash FIELDS 1 f1] "$T_NO_EXPIRY"
         }
 
+        test "HGETEX - Test with lazy expiry ($type)" {
+            r del myhash
+            r debug set-active-expire 0
+
+            r hsetex myhash PX 1 FIELDS 2 f1 v1 f2 v2
+            after 5
+            assert_equal [r hgetex myhash FIELDS 2 f1 f2] "{} {}"
+            assert_equal [r exists myhash] 0
+
+            r debug set-active-expire 1
+        }
+
         test "HSETEX - input validation ($type)" {
             assert_error {*wrong number of arguments*} {r hsetex myhash}
             assert_error {*wrong number of arguments*} {r hsetex myhash fields}
@@ -1644,6 +1656,16 @@ start_server {tags {"external:skip needs:debug"}} {
                 r hpexpire h2 1 FIELDS 2 f1 f2
                 after 200
 
+                r hsetex h3 EX 100000 FIELDS 2 f1 v1 f2 v2
+                r hsetex h3 EXAT [expr [clock seconds] + 1000] FIELDS 2 f1 v1 f2 v2
+                r hsetex h3 PX 100000 FIELDS 2 f1 v1 f2 v2
+                r hsetex h3 PXAT [expr [clock milliseconds]+100000] FIELDS 2 f1 v1 f2 v2
+
+                r hgetex h3 EX 100000 FIELDS 2 f1 f2
+                r hgetex h3 EXAT [expr [clock seconds] + 1000] FIELDS 2 f1 f2
+                r hgetex h3 PX 100000 FIELDS 2 f1 f2
+                r hgetex h3 PXAT [expr [clock milliseconds]+100000] FIELDS 2 f1 f2
+
                 assert_aof_content $aof {
                     {select *}
                     {hset h1 f1 v1 f2 v2 f3 v3 f4 v4 f5 v5 f6 v6}
@@ -1655,6 +1677,14 @@ start_server {tags {"external:skip needs:debug"}} {
                     {hpexpireat h2 * FIELDS 2 f1 f2}
                     {hdel h2 *}
                     {hdel h2 *}
+                    {hsetex h3 PXAT * FIELDS 2 f1 v1 f2 v2}
+                    {hsetex h3 PXAT * FIELDS 2 f1 v1 f2 v2}
+                    {hsetex h3 PXAT * FIELDS 2 f1 v1 f2 v2}
+                    {hsetex h3 PXAT * FIELDS 2 f1 v1 f2 v2}
+                    {hpexpireat h3 * FIELDS 2 f1 f2}
+                    {hpexpireat h3 * FIELDS 2 f1 f2}
+                    {hpexpireat h3 * FIELDS 2 f1 f2}
+                    {hpexpireat h3 * FIELDS 2 f1 f2}
                 }
 
                 array set keyAndFields1 [dumpAllHashes r]
@@ -1773,6 +1803,23 @@ start_server {tags {"external:skip needs:debug"}} {
                 $primary hset h5 f v
                 $primary hpexpireat h5 [expr [clock milliseconds]-100000] FIELDS 1 f
                 $primary hset h9 f v
+
+                $primary hsetex h10 EX 100000 FIELDS 1 f v
+                $primary hsetex h11 EXAT [expr [clock seconds] + 1000] FIELDS 1 f v
+                $primary hsetex h12 PX 100000 FIELDS 1 f v
+                $primary hsetex h13 PXAT [expr [clock milliseconds]+100000] FIELDS 1 f v
+                $primary hsetex h14 PXAT 1 FIELDS 1 f v
+
+                $primary hsetex h15 FIELDS 1 f v
+                $primary hgetex h15 EX 100000 FIELDS 1 f
+                $primary hsetex h16 FIELDS 1 f v
+                $primary hgetex h16 EXAT [expr [clock seconds] + 1000] FIELDS 1 f
+                $primary hsetex h17 FIELDS 1 f v
+                $primary hgetex h17 PX 100000 FIELDS 1 f
+                $primary hsetex h18 FIELDS 1 f v
+                $primary hgetex h18 PXAT [expr [clock milliseconds]+100000] FIELDS 1 f
+                $primary hsetex h19 FIELDS 1 f v
+                $primary hgetex h19 PXAT 1 FIELDS 1 f
 
                 # Wait for replica to get the keys and TTLs
                 assert {[$primary wait 1 0] == 1}
