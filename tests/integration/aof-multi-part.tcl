@@ -1410,7 +1410,11 @@ tags {"external:skip"} {
             assert_equal v1 [r get k1]
             assert_equal v2 [r get k2]
 
-            # Get repl offset by stat offset plus file size
+            # After loading AOF, redis will update the replication offset based on
+            # the information of the last INCR AOF, to avoid the rollback of the
+            # start offset of new INCR AOF. If the INCR file doesn't have an end offset
+            # info, redis will calculate the replication offset by the start offset
+            # plus the file size.
             set file_size [file size $aof_incr1_file]
             set offset [expr $file_size + 100]
             assert_equal $offset [s master_repl_offset]
@@ -1439,7 +1443,7 @@ tags {"external:skip"} {
             assert_equal v1 [r get k1]
             assert_equal v2 [r get k2]
 
-            # Get repl offset by end offset
+            # If the INCR file has an end offset, redis directly uses it as replication offset
             assert_equal 200 [s master_repl_offset]
 
             # We should reset endoffset in manifest file
