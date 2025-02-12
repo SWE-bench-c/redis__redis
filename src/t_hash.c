@@ -2243,7 +2243,12 @@ static int parseExpireTime(client *c, robj *o, int unit, long long basetime,
 #define HFE_FXX      (1<<6) /* Set fields if all the fields already exist */
 #define HFE_FNX      (1<<7) /* Set fields if none of the fields exist */
 
-/* Parse hsetex command arguments. */
+/* Parse hsetex command arguments.
+ * HSETEX <key>
+ *  [FNX|FXX]
+ *  [EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|KEEPTTL]
+ *  FIELDS <numfields> field value [field value ...]
+*/
 static int hsetexParseArgs(client *c, int *flags,
                            long long *expire_time, int *expire_time_pos,
                            int *first_field_pos, int *field_count) {
@@ -2273,7 +2278,6 @@ static int hsetexParseArgs(client *c, int *flags,
 
             *first_field_pos = i + 2;
             *field_count = (int) val;
-            i = *first_field_pos + *field_count - 1;
             return C_OK;
         } else if (!strcasecmp(c->argv[i]->ptr, "EX")) {
             if (*flags & (HFE_EX | HFE_EXAT | HFE_PX | HFE_PXAT | HFE_KEEPTTL))
@@ -2349,7 +2353,7 @@ static int hsetexParseArgs(client *c, int *flags,
         }
     }
 
-    return C_OK;
+    serverAssert(0);
 
 err_missing_expire:
     addReplyError(c, "missing expire time");
