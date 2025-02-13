@@ -118,6 +118,12 @@ typedef struct {
 } defragPubSubCtx;
 static_assert(offsetof(defragPubSubCtx, kvstate) == 0, "defragStageKvstoreHelper requires this");
 
+typedef struct {
+    RedisModule *module;
+    RedisModuleDefragCtx *module_ctx;
+    unsigned long cursor;
+} defragModuleCtx;
+
 /* When scanning a main kvstore, large elements are queued for later handling rather than
  * causing a large latency spike while processing a hash table bucket. This list is only used
  * for stage: "defragStageDbKeys". It will only contain values for the current kvstore being
@@ -1238,11 +1244,25 @@ static doneStatus defragLuaScripts(monotime endtime, void *target, void *privdat
     return DEFRAG_DONE;
 }
 
+/* Handles defragmentation of module global data. This is a stage function
+ * that gets called periodically during the active defragmentation process. */
 static doneStatus defragModuleGlobals(monotime endtime, void *target, void *privdata) {
     UNUSED(target);
-    UNUSED(privdata);
+    defragModuleCtx *ctx = privdata;
     if (endtime == 0) return DEFRAG_NOT_DONE; /* required initialization */
-    moduleDefragGlobals();
+
+    /* Set up context for the module's defrag callback. */
+    ctx->module_ctx->endtime = endtime;
+    ctx->module_ctx->cursor = &ctx->cursor;
+
+    /* Call the module's defrag callback function and check if more work remains. */
+    ctx->module->defrag_cb(ctx->module_ctx);
+    if (ctx->cursor != 0)
+        return DEFRAG_NOT_DONE;
+
+    /* Clean up when module defragmentation is complete. */
+    zfree(ctx->module_ctx);
+    zfree(ctx);
     return DEFRAG_DONE;
 }
 
@@ -1508,7 +1528,21 @@ static void beginDefragCycle(void) {
     addDefragStage(defragStagePubsubKvstore, server.pubsubshard_channels, &getClientPubSubShardChannelsFn);
 
     addDefragStage(defragLuaScripts, NULL, NULL);
-    addDefragStage(defragModuleGlobals, NULL, NULL);
+
+    /* Add stages for modules. */
+    dictIterator *di = dictGetIterator(modules);
+    dictEntry *de;
+    while ((de = dictNext(di)) != NULL) {
+        struct RedisModule *module = dictGetVal(de);
+        if (module->defrag_cb) {
+            defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx));
+            ctx->module = module;
+            ctx->module_ctx = zcalloc(sizeof(RedisModuleDefragCtx));
+            ctx->cursor = 0;
+            addDefragStage(defragModuleGlobals, NULL, ctx);
+        }
+    }
+    dictReleaseIterator(di);
 
     defrag.current_stage = NULL;
     defrag.start_cycle = getMonotonicUs();

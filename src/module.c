@@ -13778,16 +13778,6 @@ const char *RM_GetCurrentCommandName(RedisModuleCtx *ctx) {
  * ## Defrag API
  * -------------------------------------------------------------------------- */
 
-/* The defrag context, used to manage state during calls to the data type
- * defrag callback.
- */
-struct RedisModuleDefragCtx {
-    monotime endtime;
-    unsigned long *cursor;
-    struct redisObject *key; /* Optional name of key processed, NULL when unknown. */
-    int dbid;                /* The dbid of the key being processed, -1 when unknown. */
-};
-
 /* Register a defrag callback for global data, i.e. anything that the module
  * may allocate that is not tied to a specific data type.
  */
@@ -13985,16 +13975,6 @@ int moduleDefragValue(robj *key, robj *value, int dbid) {
     RedisModuleDefragCtx defrag_ctx = { 0, NULL, key, dbid };
     mt->defrag(&defrag_ctx, key, &mv->value);
     return 1;
-}
-
-/* Call registered module API defrag functions */
-void moduleDefragGlobals(void) {
-    dictForEach(modules, struct RedisModule, module, 
-        if (module->defrag_cb) {
-            RedisModuleDefragCtx defrag_ctx = { 0, NULL, NULL, -1};
-            module->defrag_cb(&defrag_ctx);
-        }
-    );
 }
 
 /* Call registered module API defrag start functions */
