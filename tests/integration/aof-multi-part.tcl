@@ -1341,6 +1341,7 @@ tags {"external:skip"} {
             set client [redis [srv host] [srv port] 0 $::tls]
             wait_done_loading $client
 
+            # The manifest file has startoffset now
             assert_aof_manifest_content $aof_manifest_file {
                 {file appendonly.aof.1.base.rdb seq 1 type b}
                 {file appendonly.aof.1.incr.aof seq 1 type i startoffset 0}
@@ -1375,12 +1376,14 @@ tags {"external:skip"} {
             $client set k3 v3
             catch {$client shutdown}
 
-            # Should not add offset to the manifest
+            # Should not add offset to the manifest since we also don't know the right
+            # starting replication of them.
             set fp [open $aof_manifest_file r]
             set content [read $fp]
             close $fp
             assert ![regexp {startoffset} $content]
 
+            # The manifest file still have information from the old version
             assert_aof_manifest_content $aof_manifest_file  {
                 {file appendonly.aof.1.base.aof seq 1 type b}
                 {file appendonly.aof.1.incr.aof seq 1 type i}
@@ -1468,7 +1471,8 @@ tags {"external:skip"} {
 
             $client set k1 v1
             $client set k2 v2
-
+            # Close AOF gracefully when stopping appendonly, we should add endoffset
+            # in the manifest file, 'endoffset' should be 2 since writing 2 commands
             r config set appendonly no
             assert_aof_manifest_content $aof_manifest_file {
                 {file appendonly.aof.1.base.rdb seq 1 type b}
@@ -1478,6 +1482,8 @@ tags {"external:skip"} {
             waitForBgrewriteaof $client
 
             $client set k3 v3
+            # Close AOF gracefully when shutting down server, we should add endoffset
+            # in the manifest file, 'endoffset' should be 3 since writing 3 commands
             catch {$client shutdown}
             assert_aof_manifest_content $aof_manifest_file {
                 {file appendonly.aof.2.base.rdb seq 2 type b}
@@ -1492,7 +1498,8 @@ tags {"external:skip"} {
         start_server [list overrides [list dir $server_path appendonly yes ]] {
             r config set auto-aof-rewrite-percentage 0
 
-            # Start write load
+            # Start write load to let the master_repl_offset continue increasing
+            # since appendonly is enabled
             set load_handle0 [start_write_load [srv 0 host] [srv 0 port] 10]
             wait_for_condition 50 100 {
                 [r dbsize] > 0
