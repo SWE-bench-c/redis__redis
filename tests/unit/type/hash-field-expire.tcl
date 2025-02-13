@@ -1829,5 +1829,102 @@ start_server {tags {"external:skip needs:debug"}} {
                 assert_equal [dumpAllHashes $primary] [dumpAllHashes $replica]
             }
         }
+
+        test "Test HSETEX command replication" {
+            r flushall
+            set repl [attach_to_replication_stream]
+
+            # Create a field and delete it in a single command due to timestamp
+            # being in the past. It will be propagated as HDEL.
+            r hsetex h1 PXAT 1 FIELDS 1 f1 v1
+
+            # Following ones will be propagated with PXAT arg
+            r hsetex h1 EX 100000 FIELDS 1 f1 v1
+            r hsetex h1 EXAT [expr [clock seconds] + 1000] FIELDS 1 f1 v1
+            r hsetex h1 PX 100000 FIELDS 1 f1 v1
+            r hsetex h1 PXAT [expr [clock milliseconds]+100000] FIELDS 1 f1 v1
+
+            # Propagate with KEEPTTL flag
+            r hsetex h1 KEEPTTL FIELDS 1 f1 v1
+
+            # Following commands will fail and won't be propagated
+            r hsetex h1 FNX FIELDS 1 f1 v11
+            r hsetex h1 FXX FIELDS 1 f2 v2
+
+            # Propagate with FNX and FXX flags
+            r hsetex h1 FNX FIELDS 1 f2 v2
+            r hsetex h1 FXX FIELDS 1 f2 v22
+
+            assert_replication_stream $repl {
+                {select *}
+                {hdel h1 f1}
+                {hsetex h1 PXAT * FIELDS 1 f1 v1}
+                {hsetex h1 PXAT * FIELDS 1 f1 v1}
+                {hsetex h1 PXAT * FIELDS 1 f1 v1}
+                {hsetex h1 PXAT * FIELDS 1 f1 v1}
+                {hsetex h1 KEEPTTL FIELDS 1 f1 v1}
+                {hsetex h1 FNX FIELDS 1 f2 v2}
+                {hsetex h1 FXX FIELDS 1 f2 v22}
+            }
+            close_replication_stream $repl
+        } {} {needs:repl}
+
+        test "Test HGETEX command replication" {
+            r flushall
+            r debug set-active-expire 0
+            set repl [attach_to_replication_stream]
+
+            # If no fields are found, command won't be replicated
+            r hgetex h1 EX 10000 FIELDS 1 f0
+            r hgetex h1 PERSIST FIELDS 1 f0
+
+            # Get without setting expiry will not be replicated
+            r hsetex h1 FIELDS 1 f0 v0
+            r hgetex h1 FIELDS 1 f0
+
+            # Lazy expired field will be replicated as HDEL
+            r hsetex h1 PX 10 FIELDS 1 f1 v1
+            after 15
+            r hgetex h1 EX 1000 FIELDS 1 f1
+
+            # If new TTL is in the past, it will be replicated as HDEL
+            r hsetex h1 EX 10000 FIELDS 1 f2 v2
+            r hgetex h1 EXAT 1 FIELDS 1 f2
+
+            # A field will expire lazily and other field will be deleted due to
+            # TTL is being in the past. It'll be propagated as two HDEL's.
+            r hsetex h1 PX 10 FIELDS 1 f3 v3
+            after 15
+            r hsetex h1 FIELDS 1 f4 v4
+            r hgetex h1 EXAT 1 FIELDS 2 f3 f4
+
+            # TTL update, it will be replicated as HPEXPIREAT
+            r hsetex h1 FIELDS 1 f5 v5
+            r hgetex h1 EX 10000 FIELDS 1 f5
+
+            # If PERSIST flag is used, it will be replicated as HPERSIST
+            r hsetex h1 EX 10000 FIELDS 1 f6 v6
+            r hgetex h1 PERSIST FIELDS 1 f6
+
+            assert_replication_stream $repl {
+                {select *}
+                {hsetex h1 FIELDS 1 f0 v0}
+                {hsetex h1 PXAT * FIELDS 1 f1 v1}
+                {hdel h1 f1}
+                {hsetex h1 PXAT * FIELDS 1 f2 v2}
+                {hdel h1 f2}
+                {hsetex h1 PXAT * FIELDS 1 f3 v3}
+                {hsetex h1 FIELDS 1 f4 v4}
+                {multi}
+                    {hdel h1 f3}
+                    {hdel h1 f4}
+                {exec}
+                {hsetex h1 FIELDS 1 f5 v5}
+                {hpexpireat h1 * FIELDS 1 f5}
+                {hsetex h1 PXAT * FIELDS 1 f6 v6}
+                {hpersist h1 FIELDS 1 f6}
+            }
+            close_replication_stream $repl
+        } {} {needs:repl}
     }
 }
