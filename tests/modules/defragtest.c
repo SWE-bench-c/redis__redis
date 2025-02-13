@@ -39,7 +39,7 @@ static void createGlobalStrings(RedisModuleCtx *ctx, unsigned long count)
     }
 }
 
-static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
+static void defragGlobalStrings(RedisModuleDefragCtx *ctx)
 {
     unsigned long cursor = 0;
     RedisModule_DefragCursorGet(ctx, &cursor);
