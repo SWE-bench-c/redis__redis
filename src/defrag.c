@@ -37,9 +37,7 @@ typedef enum { DEFRAG_NOT_DONE = 0,
  *  endtime     - This is the monotonic time that the function should end and return. This ensures
  *                a bounded latency due to defrag. When endtime is 0, the internal state should be
  *                cleared, preparing to begin the stage with a new target.
- *  target      - This is the "thing" that should be defragged. It's type is dependent on the
- *                type of the stage function. This might be a dict, a kvstore, a DB, or other.
- *  privdata    - A pointer to arbitrary private data which is unique to the stage function.
+ *  ctx         - A pointer to context which is unique to the stage function.
  *
  * Returns:
  *  - DEFRAG_DONE if the stage is complete
@@ -49,7 +47,7 @@ typedef doneStatus (*defragStageFn)(monotime endtime, void *ctx);
 
 typedef struct {
     defragStageFn stage_fn; /* The function to be invoked for the stage */
-    void *ctx; /* Private data, unique to the stage function */
+    void *ctx; /* Context, unique to the stage function */
 } StageDescriptor;
 
 /* Globals needed for the main defrag processing logic.
@@ -74,7 +72,7 @@ static struct DefragContext defrag = {0, 0, 0, 0, 1.0f};
  * `defragStageKvstoreHelper()` is defined. This function aids in iterating over the kvstore. It
  * uses these definitions.
  */
-/* State of the kvstore helper. The private data (privdata) passed to the kvstore helper MUST BEGIN
+/* State of the kvstore helper. The context passed to the kvstore helper MUST BEGIN
  * with a kvstoreIterState (or be passed as NULL). */
 #define KVS_SLOT_DEFRAG_LUT -2
 #define KVS_SLOT_UNASSIGNED -1
@@ -89,7 +87,7 @@ typedef struct {
  * main dictionary, large items are set aside and processed by this function before continuing with
  * iteration over the kvstore.
  *  endtime     - This is the monotonic time that the function should end and return.
- *  privdata    - Private data for functions invoked by the helper. If provided in the call to
+ *  ctx         - Context for functions invoked by the helper. If provided in the call to
  *                `defragStageKvstoreHelper()`, the `kvstoreIterState` portion (at the beginning)
  *                will be updated with the current kvstore iteration status.
  *
@@ -99,14 +97,14 @@ typedef struct {
  */
 typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *ctx);
 
-/* Private data for main dictionary keys */
+/* Context for main dictionary keys */
 typedef struct {
     kvstoreIterState kvstate;
     int dbid;
 } defragKeysCtx;
 static_assert(offsetof(defragKeysCtx, kvstate) == 0, "defragStageKvstoreHelper requires this");
 
-/* Private data for pubsub kvstores */
+/* Context for pubsub kvstores */
 typedef dict *(*getClientChannelsFn)(client *);
 typedef struct {
     kvstoreIterState kvstate;
