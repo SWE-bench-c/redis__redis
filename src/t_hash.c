@@ -2414,7 +2414,7 @@ void hsetexCommand(client *c) {
             int exists = hashTypeExists(c->db, o, field, opt, NULL);
             found += (exists != 0);
 
-            /* Check for early exist if the condition is already invalid. */
+            /* Check for early exit if the condition is already invalid. */
             if (((flags & HFE_FXX) && !exists) ||
                 ((flags & HFE_FNX) && exists))
                 break;
@@ -2470,7 +2470,7 @@ void hsetexCommand(client *c) {
 
     if (deleted) {
         /* If fields are deleted due to timestamp is being in the past, hdel's
-         * are already propagated. No need to propragate the command itself. */
+         * are already propagated. No need to propagate the command itself. */
         preventCommandPropagation(c);
     } else if (set_expiry && !(flags & HFE_PXAT)) {
         /* Propagate as 'HSETEX <key> PXAT ..' if there is EX/EXAT/PX flag*/
@@ -2725,7 +2725,7 @@ void hgetdelCommand(client *c) {
         }
     }
 
-    /* Early exist if no modification has been made. */
+    /* Return if no modification has been made. */
     if (expired == 0 && deleted == 0)
         return;
 
@@ -2875,9 +2875,9 @@ void hgetexCommand(client *c) {
                            oldlen, newlen);
 
     /* This command will never be propagated as it is. It will be propagated as
-     * HDELs if fields are lazily expired or deleted due to new timestamp is in
-     * the past. HDEL's be emitted as part of addHashFieldToReply() or
-     * hashTypeSetEx() in this case.
+     * HDELs when fields are lazily expired or deleted, if the new timestamp is
+     * in the past. HDEL's will be emitted as part of addHashFieldToReply()
+     * or hashTypeSetEx() in this case.
      *
      * If PERSIST flags is used, it will be propagated as HPERSIST command.
      * IF EX/EXAT/PX/PXAT flags are used, it will be replicated as HPEXPRITEAT.
