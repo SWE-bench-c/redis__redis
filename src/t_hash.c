@@ -3823,48 +3823,48 @@ static void hexpireGenericCommand(client *c, long long basetime, int unit) {
     }
 }
 
-/* HPEXPIRE key milliseconds [ NX | XX | GT | LT] numfields <field [field ...]> */
+/* HPEXPIRE key milliseconds [ NX | XX | GT | LT] FIELDS numfields <field [field ...]> */
 void hpexpireCommand(client *c) {
     hexpireGenericCommand(c,commandTimeSnapshot(),UNIT_MILLISECONDS);
 }
 
-/* HEXPIRE key seconds [NX | XX | GT | LT] numfields <field [field ...]> */
+/* HEXPIRE key seconds [NX | XX | GT | LT] FIELDS numfields <field [field ...]> */
 void hexpireCommand(client *c) {
     hexpireGenericCommand(c,commandTimeSnapshot(),UNIT_SECONDS);
 }
 
-/* HEXPIREAT key unix-time-seconds [NX | XX | GT | LT] numfields <field [field ...]> */
+/* HEXPIREAT key unix-time-seconds [NX | XX | GT | LT] FIELDS numfields <field [field ...]> */
 void hexpireatCommand(client *c) {
     hexpireGenericCommand(c,0,UNIT_SECONDS);
 }
 
-/* HPEXPIREAT key unix-time-milliseconds [NX | XX | GT | LT] numfields <field [field ...]> */
+/* HPEXPIREAT key unix-time-milliseconds [NX | XX | GT | LT] FIELDS numfields <field [field ...]> */
 void hpexpireatCommand(client *c) {
     hexpireGenericCommand(c,0,UNIT_MILLISECONDS);
 }
 
 /* for each specified field: get the remaining time to live in seconds*/
-/* HTTL key numfields <field [field ...]> */
+/* HTTL key FIELDS numfields <field [field ...]> */
 void httlCommand(client *c) {
     httlGenericCommand(c, "httl", commandTimeSnapshot(), UNIT_SECONDS);
 }
 
-/* HPTTL key numfields <field [field ...]> */
+/* HPTTL key FIELDS numfields <field [field ...]> */
 void hpttlCommand(client *c) {
     httlGenericCommand(c, "hpttl", commandTimeSnapshot(), UNIT_MILLISECONDS);
 }
 
-/* HEXPIRETIME key numFields <field [field ...]> */
+/* HEXPIRETIME key FIELDS numfields <field [field ...]> */
 void hexpiretimeCommand(client *c) {
     httlGenericCommand(c, "hexpiretime", 0, UNIT_SECONDS);
 }
 
-/* HPEXPIRETIME key numFields <field [field ...]> */
+/* HPEXPIRETIME key FIELDS numfields <field [field ...]> */
 void hpexpiretimeCommand(client *c) {
     httlGenericCommand(c, "hexpiretime", 0, UNIT_MILLISECONDS);
 }
 
-/* HPERSIST key <FIELDS count field [field ...]> */
+/* HPERSIST key FIELDS numfields <field [field ...]> */
 void hpersistCommand(client *c) {
     robj *hashObj;
     long numFields = 0, numFieldsAt = 3;
