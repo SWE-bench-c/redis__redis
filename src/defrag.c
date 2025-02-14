@@ -45,12 +45,11 @@ typedef enum { DEFRAG_NOT_DONE = 0,
  *  - DEFRAG_DONE if the stage is complete
  *  - DEFRAG_NOT_DONE if there is more work to do
  */
-typedef doneStatus (*defragStageFn)(monotime endtime, void *target, void *privdata);
+typedef doneStatus (*defragStageFn)(monotime endtime, void *ctx);
 
 typedef struct {
     defragStageFn stage_fn; /* The function to be invoked for the stage */
-    void *target;           /* The target that the function will defrag */
-    void *privdata;         /* Private data, unique to the stage function */
+    void *ctx; /* Private data, unique to the stage function */
 } StageDescriptor;
 
 /* Globals needed for the main defrag processing logic.
@@ -84,6 +83,7 @@ typedef struct {
     int slot;
     unsigned long cursor;
 } kvstoreIterState;
+#define INIT_KVSTORE_STATE(kvs) ((kvstoreIterState){(kvs), KVS_SLOT_DEFRAG_LUT, 0})
 
 /* The kvstore helper uses this function to perform tasks before continuing the iteration. For the
  * main dictionary, large items are set aside and processed by this function before continuing with
@@ -97,7 +97,7 @@ typedef struct {
  *  - DEFRAG_DONE if the pre-continue work is complete
  *  - DEFRAG_NOT_DONE if there is more work to do
  */
-typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *privdata);
+typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *ctx);
 
 /* Private data for main dictionary keys */
 typedef struct {
@@ -108,10 +108,6 @@ static_assert(offsetof(defragKeysCtx, kvstate) == 0, "defragStageKvstoreHelper r
 
 /* Private data for pubsub kvstores */
 typedef dict *(*getClientChannelsFn)(client *);
-typedef struct {
-    getClientChannelsFn fn;
-} getClientChannelsFnWrapper;
-
 typedef struct {
     kvstoreIterState kvstate;
     getClientChannelsFn getPubSubChannels;
@@ -1110,36 +1106,23 @@ void computeDefragCycles(void) {
  * provided, MUST begin with 'kvstoreIterState' and this part is automatically updated by this
  * function during the iteration. */
 static doneStatus defragStageKvstoreHelper(monotime endtime,
-                                           kvstore *kvs,
+                                           void *ctx,
                                            dictScanFunction scan_fn,
                                            kvstoreHelperPreContinueFn precontinue_fn,
-                                           dictDefragFunctions *defragfns,
-                                           void *privdata)
+                                           dictDefragFunctions *defragfns)
 {
-    static kvstoreIterState state; /* STATIC - this persists */
-    if (endtime == 0) {
-        /* Starting the stage, set up the state information for this stage */
-        state.kvs = kvs;
-        state.slot = KVS_SLOT_DEFRAG_LUT;
-        state.cursor = 0;
-        return DEFRAG_NOT_DONE;
-    }
-    if (kvs != state.kvs) {
-        /* There has been a change of the kvs (flushdb, swapdb, etc.). Just complete the stage. */
-        return DEFRAG_DONE;
-    }
-
     unsigned int iterations = 0;
     unsigned long long prev_defragged = server.stat_active_defrag_hits;
     unsigned long long prev_scanned = server.stat_active_defrag_scanned;
+    kvstoreIterState *state = (kvstoreIterState*)ctx;
 
-    if (state.slot == KVS_SLOT_DEFRAG_LUT) {
+    if (state->slot == KVS_SLOT_DEFRAG_LUT) {
         /* Before we start scanning the kvstore, handle the main structures */
         do {
-            state.cursor = kvstoreDictLUTDefrag(kvs, state.cursor, dictDefragTables);
+            state->cursor = kvstoreDictLUTDefrag(state->kvs, state->cursor, dictDefragTables);
             if (getMonotonicUs() >= endtime) return DEFRAG_NOT_DONE;
-        } while (state.cursor != 0);
-        state.slot = KVS_SLOT_UNASSIGNED;
+        } while (state->cursor != 0);
+        state->slot = KVS_SLOT_UNASSIGNED;
     }
 
     while (true) {
@@ -1151,42 +1134,36 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
         }
 
         if (precontinue_fn) {
-            if (privdata) *(kvstoreIterState *)privdata = state;
-            if (precontinue_fn(endtime, privdata) == DEFRAG_NOT_DONE) return DEFRAG_NOT_DONE;
+            if (precontinue_fn(endtime, ctx) == DEFRAG_NOT_DONE) return DEFRAG_NOT_DONE;
         }
 
-        if (!state.cursor) {
+        if (!state->cursor) {
             /* If there's no cursor, we're ready to begin a new kvstore slot. */
-            if (state.slot == KVS_SLOT_UNASSIGNED) {
-                state.slot = kvstoreGetFirstNonEmptyDictIndex(kvs);
+            if (state->slot == KVS_SLOT_UNASSIGNED) {
+                state->slot = kvstoreGetFirstNonEmptyDictIndex(state->kvs);
             } else {
-                state.slot = kvstoreGetNextNonEmptyDictIndex(kvs, state.slot);
+                state->slot = kvstoreGetNextNonEmptyDictIndex(state->kvs, state->slot);
             }
 
-            if (state.slot == KVS_SLOT_UNASSIGNED) return DEFRAG_DONE;
+            if (state->slot == KVS_SLOT_UNASSIGNED) return DEFRAG_DONE;
         }
 
         /* Whatever privdata's actual type, this function requires that it begins with kvstoreIterState. */
-        if (privdata) *(kvstoreIterState *)privdata = state;
-        state.cursor = kvstoreDictScanDefrag(kvs, state.slot, state.cursor,
-                                             scan_fn, defragfns, privdata);
+        state->cursor = kvstoreDictScanDefrag(state->kvs, state->slot, state->cursor,
+                                             scan_fn, defragfns, ctx);
     }
 
     return DEFRAG_NOT_DONE;
 }
 
 /* Target is a DBID */
-static doneStatus defragStageDbKeys(monotime endtime, void *target, void *privdata) {
-    UNUSED(privdata);
-    int dbid = (uintptr_t)target;
-    redisDb *db = &server.db[dbid];
-
-    static defragKeysCtx ctx; /* STATIC - this persists */
-    if (endtime == 0) {
-        ctx.dbid = dbid;
-        /* Don't return yet. Call the helper with endtime==0 below. */
+static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
+    defragKeysCtx *defrag_keys_ctx = ctx;
+    redisDb *db = &server.db[defrag_keys_ctx->dbid];
+    if (db->keys != defrag_keys_ctx->kvstate.kvs) {
+        /* There has been a change of the kvs (flushdb, swapdb, etc.). Just complete the stage. */
+        return DEFRAG_DONE;
     }
-    serverAssert(ctx.dbid == dbid);
 
     /* Note: for DB keys, we use the start/finish callback to fix an expires table entry if
      * the main DB entry has been moved. */
@@ -1196,62 +1173,63 @@ static doneStatus defragStageDbKeys(monotime endtime, void *target, void *privda
         .defragVal = NULL, /* Handled by dbKeysScanCallback */
     };
 
-    return defragStageKvstoreHelper(endtime, db->keys,
-                                    dbKeysScanCallback, defragLaterStep, &defragfns, &ctx);
+    return defragStageKvstoreHelper(endtime, ctx,
+        dbKeysScanCallback, defragLaterStep, &defragfns);
 }
 
-static doneStatus defragStageExpiresKvstore(monotime endtime, void *target, void *privdata) {
-    UNUSED(privdata);
-    int dbid = (uintptr_t)target;
-    redisDb *db = &server.db[dbid];
+static doneStatus defragStageExpiresKvstore(monotime endtime, void *ctx) {
+    defragKeysCtx *defrag_keys_ctx = ctx;
+    redisDb *db = &server.db[defrag_keys_ctx->dbid];
+    if (db->keys != defrag_keys_ctx->kvstate.kvs) {
+        /* There has been a change of the kvs (flushdb, swapdb, etc.). Just complete the stage. */
+        return DEFRAG_DONE;
+    }
+
     static dictDefragFunctions defragfns = {
         .defragAlloc = activeDefragAlloc,
         .defragKey = NULL, /* Not needed for expires (just a ref) */
         .defragVal = NULL, /* Not needed for expires (no value) */
     };
-    return defragStageKvstoreHelper(endtime, db->expires,
-        scanCallbackCountScanned, NULL, &defragfns, NULL);
+    return defragStageKvstoreHelper(endtime, ctx,
+        scanCallbackCountScanned, NULL, &defragfns);
 }
 
-
-static doneStatus defragStagePubsubKvstore(monotime endtime, void *target, void *privdata) {
-    /* target is server.pubsub_channels or server.pubsubshard_channels */
-    getClientChannelsFnWrapper *fnWrapper = privdata;
-
+static doneStatus defragStagePubsubKvstore(monotime endtime, void *ctx) {
     static dictDefragFunctions defragfns = {
         .defragAlloc = activeDefragAlloc,
         .defragKey = NULL, /* Handled by defragPubsubScanCallback */
         .defragVal = NULL, /* Not needed for expires (no value) */
     };
-    defragPubSubCtx ctx;
 
-    ctx.getPubSubChannels = fnWrapper->fn;
-    return defragStageKvstoreHelper(endtime, (kvstore *)target,
-                                    defragPubsubScanCallback, NULL, &defragfns, &ctx);
+    return defragStageKvstoreHelper(endtime, ctx,
+        defragPubsubScanCallback, NULL, &defragfns);
 }
 
-static doneStatus defragLuaScripts(monotime endtime, void *target, void *privdata) {
-    UNUSED(target);
-    UNUSED(privdata);
-    if (endtime == 0) return DEFRAG_NOT_DONE; /* required initialization */
+static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
+    UNUSED(endtime);
+    UNUSED(ctx);
     activeDefragSdsDict(evalScriptsDict(), DEFRAG_SDS_DICT_VAL_LUA_SCRIPT);
     return DEFRAG_DONE;
 }
 
-static doneStatus defragModuleGlobals(monotime endtime, void *target, void *privdata) {
-    UNUSED(target);
-    UNUSED(privdata);
-    if (endtime == 0) return DEFRAG_NOT_DONE; /* required initialization */
+static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
+    UNUSED(endtime);
+    UNUSED(ctx);
     moduleDefragGlobals();
     return DEFRAG_DONE;
 }
 
-static void addDefragStage(defragStageFn stage_fn, void *target, void *privdata) {
+static void addDefragStage(defragStageFn stage_fn, void *ctx) {
     StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
     stage->stage_fn = stage_fn;
-    stage->target = target;
-    stage->privdata = privdata;
+    stage->ctx = ctx;
     listAddNodeTail(defrag.remaining_stages, stage);
+}
+
+static void freeDefragContext(void *ptr) {
+    StageDescriptor *stage = ptr;
+    zfree(stage->ctx);
+    zfree(stage);
 }
 
 /* Updates the defrag decay rate based on the observed effectiveness of the defrag process.
@@ -1287,10 +1265,10 @@ static void endDefragCycle(int normal_termination) {
         aeDeleteTimeEvent(server.el, defrag.timeproc_id);
 
         if (defrag.current_stage) {
-            zfree(defrag.current_stage);
+            freeDefragContext(defrag.current_stage);
             defrag.current_stage = NULL;
         }
-        listSetFreeMethod(defrag.remaining_stages, zfree);
+        listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
     }
     defrag.timeproc_id = AE_DELETED_EVENT_ID;
 
@@ -1439,14 +1417,11 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
         if (!defrag.current_stage) {
             defrag.current_stage = listNodeValue(listFirst(defrag.remaining_stages));
             listDelNode(defrag.remaining_stages, listFirst(defrag.remaining_stages));
-            /* Initialize the stage with endtime==0 */
-            doneStatus status = defrag.current_stage->stage_fn(0, defrag.current_stage->target, defrag.current_stage->privdata);
-            serverAssert(status == DEFRAG_NOT_DONE); /* Initialization should always return DEFRAG_NOT_DONE */
         }
 
-        doneStatus status = defrag.current_stage->stage_fn(endtime, defrag.current_stage->target, defrag.current_stage->privdata);
+        doneStatus status = defrag.current_stage->stage_fn(endtime, defrag.current_stage->ctx);
         if (status == DEFRAG_DONE) {
-            zfree(defrag.current_stage);
+            freeDefragContext(defrag.current_stage);
             defrag.current_stage = NULL;
         }
 
@@ -1498,17 +1473,35 @@ static void beginDefragCycle(void) {
     defrag.remaining_stages = listCreate();
 
     for (int dbid = 0; dbid < server.dbnum; dbid++) {
-        addDefragStage(defragStageDbKeys, (void *)(uintptr_t)dbid, NULL);
-        addDefragStage(defragStageExpiresKvstore, (void *)(uintptr_t)dbid, NULL);
+        redisDb *db = &server.db[dbid];
+
+        /* Add stage for keys. */
+        defragKeysCtx *defrag_keys_ctx = zmalloc(sizeof(defragKeysCtx));
+        defrag_keys_ctx->kvstate = INIT_KVSTORE_STATE(db->keys);
+        defrag_keys_ctx->dbid = dbid;
+        addDefragStage(defragStageDbKeys, defrag_keys_ctx);
+
+        /* Add stage for expires. */
+        defragKeysCtx *defrag_expires_ctx = zmalloc(sizeof(defragKeysCtx));
+        defrag_expires_ctx->kvstate = INIT_KVSTORE_STATE(db->expires);
+        defrag_expires_ctx->dbid = dbid;
+        addDefragStage(defragStageExpiresKvstore, defrag_expires_ctx);
     }
 
-    static getClientChannelsFnWrapper getClientPubSubChannelsFn = {getClientPubSubChannels};
-    static getClientChannelsFnWrapper getClientPubSubShardChannelsFn = {getClientPubSubShardChannels};
-    addDefragStage(defragStagePubsubKvstore, server.pubsub_channels, &getClientPubSubChannelsFn);
-    addDefragStage(defragStagePubsubKvstore, server.pubsubshard_channels, &getClientPubSubShardChannelsFn);
+    /* Add stage for pubsub channels. */
+    defragPubSubCtx *defrag_pubsub_ctx = zmalloc(sizeof(defragPubSubCtx));
+    defrag_pubsub_ctx->kvstate = INIT_KVSTORE_STATE(server.pubsub_channels);
+    defrag_pubsub_ctx->getPubSubChannels = getClientPubSubChannels;
+    addDefragStage(defragStagePubsubKvstore, defrag_pubsub_ctx);
 
-    addDefragStage(defragLuaScripts, NULL, NULL);
-    addDefragStage(defragModuleGlobals, NULL, NULL);
+    /* Add stage for pubsubshard channels. */
+    defragPubSubCtx *defrag_pubsubshard_ctx = zmalloc(sizeof(defragPubSubCtx));
+    defrag_pubsubshard_ctx->kvstate = INIT_KVSTORE_STATE(server.pubsubshard_channels);
+    defrag_pubsubshard_ctx->getPubSubChannels = getClientPubSubShardChannels;
+    addDefragStage(defragStagePubsubKvstore, defrag_pubsubshard_ctx);
+
+    addDefragStage(defragLuaScripts, NULL);
+    addDefragStage(defragModuleGlobals, NULL);
 
     defrag.current_stage = NULL;
     defrag.start_cycle = getMonotonicUs();
