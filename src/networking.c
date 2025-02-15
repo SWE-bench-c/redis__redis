@@ -1767,7 +1767,16 @@ void freeClient(client *c) {
     dictRelease(c->pubsubshard_channels);
 
     /* Free data structures. */
-    listRelease(c->reply);
+    /* If redis is evicting clients, we don't want to free the output buffer
+     * synchronously, because we need to release the memory asap to avoid
+     * more clients being evicted. Otherwise, we can free the output buffer
+     * synchronously to avoid blocking server since the output buffer list
+     * may be very long. */
+    if (server.is_evicting_clients) {
+        listRelease(c->reply);
+    } else {
+        freeClientOutputBufferAsync(c);
+    }
     zfree(c->buf);
     freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
@@ -4528,6 +4537,7 @@ void evictClients(void) {
     size_t client_eviction_limit = getClientEvictionLimit();
     if (client_eviction_limit == 0)
         return;
+    server.is_evicting_clients = 1;
     while (server.stat_clients_type_memory[CLIENT_TYPE_NORMAL] +
            server.stat_clients_type_memory[CLIENT_TYPE_PUBSUB] >= client_eviction_limit) {
         listNode *ln = listNext(&bucket_iter);
@@ -4570,4 +4580,5 @@ void evictClients(void) {
             listRewind(server.client_mem_usage_buckets[curr_bucket].clients, &bucket_iter);
         }
     }
+    server.is_evicting_clients = 0;
 }
