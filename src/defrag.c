@@ -23,20 +23,14 @@ typedef enum { DEFRAG_NOT_DONE = 0,
 
 /*
  * Defragmentation is performed in stages. Each stage is serviced by a stage function
- * (defragStageFn). The stage function is passed a target (void*) to defrag. The contents of that
- * target are unique to the particular stage - and may even be NULL for some stage functions. The
+ * (defragStageFn). The stage function is passed a context (void*) to defrag. The contents of that
+ * context are unique to the particular stage - and may even be NULL for some stage functions. The
  * same stage function can be used multiple times (for different stages) each having a different
- * target.
- *
- * The stage function is required to maintain an internal static state. This allows the stage
- * function to continue when invoked in an iterative manner. When invoked with a 0 endtime, the
- * stage function is required to clear it's internal state and prepare to begin a new stage. It
- * should return false (more work to do) as it should NOT perform any real "work" during init.
+ * context.
  *
  * Parameters:
  *  endtime     - This is the monotonic time that the function should end and return. This ensures
- *                a bounded latency due to defrag. When endtime is 0, the internal state should be
- *                cleared, preparing to begin the stage with a new target.
+ *                a bounded latency due to defrag.
  *  ctx         - A pointer to context which is unique to the stage function.
  *
  * Returns:
@@ -1154,7 +1148,6 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
     return DEFRAG_NOT_DONE;
 }
 
-/* Target is a DBID */
 static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
     defragKeysCtx *defrag_keys_ctx = ctx;
     redisDb *db = &server.db[defrag_keys_ctx->dbid];
