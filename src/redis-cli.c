@@ -10731,6 +10731,7 @@ int main(int argc, char **argv) {
         if (cliConnect(0) == REDIS_ERR) exit(1);
         sendCapa();
         sendRdbOnly();
+        sendReplconf("rdb-channel", "1");
         if (config.get_functions_rdb_mode && !sendReplconf("rdb-filter-only", "functions")) {
             fprintf(stderr, "Failed requesting functions only RDB from server, aborting\n");
             exit(1);
