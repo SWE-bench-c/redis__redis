@@ -1122,7 +1122,7 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
         state->slot = KVS_SLOT_UNASSIGNED;
     }
 
-    while (true) {
+    while (1) {
         if (++iterations > 16 || server.stat_active_defrag_hits - prev_defragged > 512 || server.stat_active_defrag_scanned - prev_scanned > 64) {
             if (getMonotonicUs() >= endtime) break;
             iterations = 0;
@@ -1384,7 +1384,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
 
     if (!server.active_defrag_enabled) {
         /* Defrag has been disabled while running */
-        endDefragCycle(false);
+        endDefragCycle(0);
         return AE_NOMORE;
     }
 
@@ -1397,7 +1397,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
     monotime starttime = getMonotonicUs();
     int dutyCycleUs = computeDefragCycleUs();
     monotime endtime = starttime + dutyCycleUs;
-    int haveMoreWork = true;
+    int haveMoreWork = 1;
 
     /* Increment server.cronloops so that run_with_period works. */
     long hz_ms = 1000 / server.hz;
@@ -1432,7 +1432,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
     if (haveMoreWork) {
         return computeDelayMs(endtime);
     } else {
-        endDefragCycle(true);
+        endDefragCycle(1);
         return AE_NOMORE; /* Ends the timer proc */
     }
 }
