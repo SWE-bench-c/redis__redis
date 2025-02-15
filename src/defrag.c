@@ -59,7 +59,7 @@ struct DefragContext {
     float decay_rate;               /* Defrag speed decay rate */
 
     list *remaining_stages;         /* List of stages which remain to be processed */
-    StageDescriptor *current_stage; /* The stage that's currently being processed */
+    listNode *current_stage;        /* The list node of stage that's currently being processed */
 
     long long timeproc_id;      /* Eventloop ID of the timerproc (or AE_DELETED_EVENT_ID) */
     monotime timeproc_end_time; /* Ending time of previous timerproc execution */
@@ -461,7 +461,7 @@ void activeDefragQuickListNodes(quicklist *ql) {
 void defragLater(dictEntry *kde) {
     if (!defrag_later) {
         defrag_later = listCreate();
-        listSetFreeMethod(defrag_later, (void (*)(void *))sdsfree);
+        listSetFreeMethod(defrag_later, sdsfreegeneric);
         defrag_later_cursor = 0;
     }
     sds key = sdsdup(dictGetKey(kde));
@@ -1261,10 +1261,9 @@ static void endDefragCycle(int normal_termination) {
         aeDeleteTimeEvent(server.el, defrag.timeproc_id);
 
         if (defrag.current_stage) {
-            freeDefragContext(defrag.current_stage);
+            listDelNode(defrag.remaining_stages, defrag.current_stage);
             defrag.current_stage = NULL;
         }
-        listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
     }
     defrag.timeproc_id = AE_DELETED_EVENT_ID;
 
@@ -1411,13 +1410,13 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
 
     do {
         if (!defrag.current_stage) {
-            defrag.current_stage = listNodeValue(listFirst(defrag.remaining_stages));
-            listDelNode(defrag.remaining_stages, listFirst(defrag.remaining_stages));
+            defrag.current_stage = listFirst(defrag.remaining_stages);
         }
 
-        doneStatus status = defrag.current_stage->stage_fn(endtime, defrag.current_stage->ctx);
+        StageDescriptor *stage = listNodeValue(defrag.current_stage);
+        doneStatus status = stage->stage_fn(endtime, stage->ctx);
         if (status == DEFRAG_DONE) {
-            freeDefragContext(defrag.current_stage);
+            listDelNode(defrag.remaining_stages, defrag.current_stage);
             defrag.current_stage = NULL;
         }
 
@@ -1467,6 +1466,7 @@ static void beginDefragCycle(void) {
 
     serverAssert(defrag.remaining_stages == NULL);
     defrag.remaining_stages = listCreate();
+    listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
 
     for (int dbid = 0; dbid < server.dbnum; dbid++) {
         redisDb *db = &server.db[dbid];
