@@ -9,12 +9,18 @@
  * struct.
  * This enables us to easily access all keys that map to a specific hash-slot.
  *
- * Copyright (c) 2011-Present, Redis Ltd. and contributors.
+ * Copyright (c) 2009-Present, Redis Ltd.
+ * All rights reserved.
+ *
+ * Copyright (c) 2024-present, Valkey contributors.
  * All rights reserved.
  *
  * Licensed under your choice of the Redis Source Available License 2.0
  * (RSALv2) or the Server Side Public License v1 (SSPLv1).
+ *
+ * Portions of this file are available under BSD3 terms; see REDISCONTRIBUTIONS for more information.
  */
+
 #include "fmacros.h"
 
 #include <string.h>
