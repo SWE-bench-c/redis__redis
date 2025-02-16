@@ -1851,17 +1851,17 @@ size_t streamReplyWithRangeFromConsumerPEL(client *c, stream *s, streamID *start
 
 /* Look the stream at 'key' and return the corresponding stream object.
  * The function creates a key setting it to an empty stream if needed. */
-robj *streamTypeLookupWriteOrCreate(client *c, robj *key, int no_create) {
-    robj *o = lookupKeyWrite(c->db,key);
-    if (checkType(c,o,OBJ_STREAM)) return NULL;
-    if (o == NULL) {
-        if (no_create) {
-            addReplyNull(c);
-            return NULL;
-        }
-        o = createStreamObject();
-        dbAdd(c->db,key,o);
+kvobj *streamTypeLookupWriteOrCreate(client *c, robj *key, int no_create) {
+    kvobj *kv = lookupKeyWrite(c->db,key);
+    if (checkType(c, kv, OBJ_STREAM)) return NULL;
+    if (kv != NULL) return kv;
+
+    if (no_create) {
+        addReplyNull(c);
+        return NULL;
     }
+    robj *o = createStreamObject();
+    dbAdd(c->db, key, &o);
     return o;
 }
 
@@ -2019,10 +2019,10 @@ void xaddCommand(client *c) {
     }
 
     /* Lookup the stream at key. */
-    robj *o;
+    kvobj *kv;
     stream *s;
-    if ((o = streamTypeLookupWriteOrCreate(c,c->argv[1],parsed_args.no_mkstream)) == NULL) return;
-    s = o->ptr;
+    if ((kv = streamTypeLookupWriteOrCreate(c,c->argv[1],parsed_args.no_mkstream)) == NULL) return;
+    s = kv->ptr;
 
     /* Return ASAP if the stream has reached the last possible ID */
     if (s->last_id.ms == UINT64_MAX && s->last_id.seq == UINT64_MAX) {
@@ -2092,7 +2092,7 @@ void xaddCommand(client *c) {
  *   will match anything from 1-1 and 1-UINT64_MAX.
  */
 void xrangeGenericCommand(client *c, int rev) {
-    robj *o;
+    kvobj *kv;
     stream *s;
     streamID startid, endid;
     long long count = -1;
@@ -2131,10 +2131,10 @@ void xrangeGenericCommand(client *c, int rev) {
     }
 
     /* Return the specified range to the user. */
-    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.emptyarray)) == NULL ||
-         checkType(c,o,OBJ_STREAM)) return;
+    if ((kv = lookupKeyReadOrReply(c, c->argv[1], shared.emptyarray)) == NULL ||
+        checkType(c, kv, OBJ_STREAM)) return;
 
-    s = o->ptr;
+    s = kv->ptr;
 
     if (count == 0) {
         addReplyNullArray(c);
@@ -2156,10 +2156,10 @@ void xrevrangeCommand(client *c) {
 
 /* XLEN key*/
 void xlenCommand(client *c) {
-    robj *o;
-    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL
-        || checkType(c,o,OBJ_STREAM)) return;
-    stream *s = o->ptr;
+    kvobj *kv;
+    if ((kv = lookupKeyReadOrReply(c, c->argv[1], shared.czero)) == NULL
+        || checkType(c, kv, OBJ_STREAM)) return;
+    stream *s = kv->ptr;
     addReplyLongLong(c,s->length);
 }
 
@@ -2255,15 +2255,15 @@ void xreadCommand(client *c) {
          * starting from now. */
         int id_idx = i - streams_arg - streams_count;
         robj *key = c->argv[i-streams_count];
-        robj *o = lookupKeyRead(c->db,key);
-        if (checkType(c,o,OBJ_STREAM)) goto cleanup;
+        kvobj *kv = lookupKeyRead(c->db, key);
+        if (checkType(c, kv, OBJ_STREAM)) goto cleanup;
         streamCG *group = NULL;
 
         /* If a group was specified, than we need to be sure that the
          * key and group actually exist. */
         if (groupname) {
-            if (o == NULL ||
-                (group = streamLookupCG(o->ptr,groupname->ptr)) == NULL)
+            if (kv == NULL ||
+                (group = streamLookupCG(kv->ptr, groupname->ptr)) == NULL)
             {
                 addReplyErrorFormat(c, "-NOGROUP No such key '%s' or consumer "
                                        "group '%s' in XREADGROUP with GROUP "
@@ -2283,8 +2283,8 @@ void xreadCommand(client *c) {
                                 "just return an empty result set.");
                 goto cleanup;
             }
-            if (o) {
-                stream *s = o->ptr;
+            if (kv) {
+                stream *s = kv->ptr;
                 ids[id_idx] = s->last_id;
             } else {
                 ids[id_idx].ms = 0;
@@ -2300,8 +2300,8 @@ void xreadCommand(client *c) {
                                 "just return an empty result set.");
                 goto cleanup;
             }
-            if (o) {
-                stream *s = o->ptr;
+            if (kv) {
+                stream *s = kv->ptr;
                 ids[id_idx] = s->last_id;
                 if (streamDecrID(&ids[id_idx]) != C_OK) {
                     /* shouldn't happen */
@@ -2335,9 +2335,9 @@ void xreadCommand(client *c) {
     size_t arraylen = 0;
     void *arraylen_ptr = NULL;
     for (int i = 0; i < streams_count; i++) {
-        robj *o = lookupKeyRead(c->db,c->argv[streams_arg+i]);
-        if (o == NULL) continue;
-        stream *s = o->ptr;
+        kvobj *kv = lookupKeyRead(c->db, c->argv[streams_arg + i]);
+        if (kv == NULL) continue;
+        stream *s = kv->ptr;
         streamID *gt = ids+i; /* ID must be greater than this. */
         int serve_synchronously = 0;
         int serve_history = 0; /* True for XREADGROUP with ID != ">". */
@@ -2703,7 +2703,7 @@ NULL
         if (s == NULL) {
             serverAssert(mkstream);
             o = createStreamObject();
-            dbAdd(c->db,c->argv[2],o);
+            dbAdd(c->db, c->argv[2], &o);
             s = o->ptr;
             signalModifiedKey(c,c->db,c->argv[2]);
         }
@@ -2801,9 +2801,9 @@ void xsetidCommand(client *c) {
         }
     }
 
-    robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.nokeyerr);
-    if (o == NULL || checkType(c,o,OBJ_STREAM)) return;
-    stream *s = o->ptr;
+    kvobj *kv = lookupKeyWriteOrReply(c, c->argv[1], shared.nokeyerr);
+    if (kv == NULL || checkType(c, kv, OBJ_STREAM)) return;
+    stream *s = kv->ptr;
 
     if (streamCompareID(&id,&s->max_deleted_entry_id) < 0) {
         addReplyError(c,"The ID specified in XSETID is smaller than current max_deleted_entry_id");
@@ -2849,14 +2849,14 @@ void xsetidCommand(client *c) {
  */
 void xackCommand(client *c) {
     streamCG *group = NULL;
-    robj *o = lookupKeyRead(c->db,c->argv[1]);
-    if (o) {
-        if (checkType(c,o,OBJ_STREAM)) return; /* Type error. */
-        group = streamLookupCG(o->ptr,c->argv[2]->ptr);
+    kvobj *kv = lookupKeyRead(c->db, c->argv[1]);
+    if (kv) {
+        if (checkType(c, kv, OBJ_STREAM)) return; /* Type error. */
+        group = streamLookupCG(kv->ptr, c->argv[2]->ptr);
     }
 
     /* No key or group? Nothing to ack. */
-    if (o == NULL || group == NULL) {
+    if (kv == NULL || group == NULL) {
         addReply(c,shared.czero);
         return;
     }
@@ -2966,12 +2966,12 @@ void xpendingCommand(client *c) {
     }
 
     /* Lookup the key and the group inside the stream. */
-    robj *o = lookupKeyRead(c->db,c->argv[1]);
+    kvobj *kv = lookupKeyRead(c->db, c->argv[1]);
     streamCG *group;
 
-    if (checkType(c,o,OBJ_STREAM)) return;
-    if (o == NULL ||
-        (group = streamLookupCG(o->ptr,groupname->ptr)) == NULL)
+    if (checkType(c, kv, OBJ_STREAM)) return;
+    if (kv == NULL ||
+        (group = streamLookupCG(kv->ptr, groupname->ptr)) == NULL)
     {
         addReplyErrorFormat(c, "-NOGROUP No such key '%s' or consumer "
                                "group '%s'",
@@ -3149,21 +3149,21 @@ void xpendingCommand(client *c) {
  * what messages it is now in charge of. */
 void xclaimCommand(client *c) {
     streamCG *group = NULL;
-    robj *o = lookupKeyRead(c->db,c->argv[1]);
+    kvobj *kv = lookupKeyRead(c->db,c->argv[1]);
     long long minidle; /* Minimum idle time argument. */
     long long retrycount = -1;   /* -1 means RETRYCOUNT option not given. */
     mstime_t deliverytime = -1;  /* -1 means IDLE/TIME options not given. */
     int force = 0;
     int justid = 0;
 
-    if (o) {
-        if (checkType(c,o,OBJ_STREAM)) return; /* Type error. */
-        group = streamLookupCG(o->ptr,c->argv[2]->ptr);
+    if (kv) {
+        if (checkType(c,kv,OBJ_STREAM)) return; /* Type error. */
+        group = streamLookupCG(kv->ptr,c->argv[2]->ptr);
     }
 
     /* No key or group? Send an error given that the group creation
      * is mandatory. */
-    if (o == NULL || group == NULL) {
+    if (kv == NULL || group == NULL) {
         addReplyErrorFormat(c,"-NOGROUP No such key '%s' or "
                               "consumer group '%s'", (char*)c->argv[1]->ptr,
                               (char*)c->argv[2]->ptr);
@@ -3268,7 +3268,7 @@ void xclaimCommand(client *c) {
         streamNACK *nack = result;
 
         /* Item must exist for us to transfer it to another consumer. */
-        if (!streamEntryExists(o->ptr,&id)) {
+        if (!streamEntryExists(kv->ptr,&id)) {
             /* Clear this entry from the PEL, it no longer exists */
             if (nack != NULL) {
                 /* Propagate this change (we are going to delete the NACK). */
@@ -3330,7 +3330,7 @@ void xclaimCommand(client *c) {
             if (justid) {
                 addReplyStreamID(c,&id);
             } else {
-                serverAssert(streamReplyWithRange(c,o->ptr,&id,&id,1,0,NULL,NULL,STREAM_RWR_RAWENTRIES,NULL,NULL) == 1);
+                serverAssert(streamReplyWithRange(c,kv->ptr,&id,&id,1,0,NULL,NULL,STREAM_RWR_RAWENTRIES,NULL,NULL) == 1);
             }
             arraylen++;
 
@@ -3370,7 +3370,7 @@ cleanup:
  * what messages it is now in charge of. */
 void xautoclaimCommand(client *c) {
     streamCG *group = NULL;
-    robj *o = lookupKeyRead(c->db,c->argv[1]);
+    kvobj *kv = lookupKeyRead(c->db,c->argv[1]);
     long long minidle; /* Minimum idle time argument, in milliseconds. */
     long count = 100; /* Maximum entries to claim. */
     const unsigned attempts_factor = 10;
@@ -3409,15 +3409,15 @@ void xautoclaimCommand(client *c) {
         j++;
     }
 
-    if (o) {
-        if (checkType(c,o,OBJ_STREAM))
+    if (kv) {
+        if (checkType(c,kv,OBJ_STREAM))
             return; /* Type error. */
-        group = streamLookupCG(o->ptr,c->argv[2]->ptr);
+        group = streamLookupCG(kv->ptr,c->argv[2]->ptr);
     }
 
     /* No key or group? Send an error given that the group creation
      * is mandatory. */
-    if (o == NULL || group == NULL) {
+    if (kv == NULL || group == NULL) {
         addReplyErrorFormat(c,"-NOGROUP No such key '%s' or consumer group '%s'",
                             (char*)c->argv[1]->ptr,
                             (char*)c->argv[2]->ptr);
@@ -3458,7 +3458,7 @@ void xautoclaimCommand(client *c) {
         streamDecodeID(ri.key, &id);
 
         /* Item must exist for us to transfer it to another consumer. */
-        if (!streamEntryExists(o->ptr,&id)) {
+        if (!streamEntryExists(kv->ptr,&id)) {
             /* Propagate this change (we are going to delete the NACK). */
             robj *idstr = createObjectFromStreamID(&id);
             streamPropagateXCLAIM(c,c->argv[1],group,c->argv[2],idstr,nack);
@@ -3505,7 +3505,7 @@ void xautoclaimCommand(client *c) {
         if (justid) {
             addReplyStreamID(c,&id);
         } else {
-            serverAssert(streamReplyWithRange(c,o->ptr,&id,&id,1,0,NULL,NULL,STREAM_RWR_RAWENTRIES,NULL,NULL) == 1);
+            serverAssert(streamReplyWithRange(c,kv->ptr,&id,&id,1,0,NULL,NULL,STREAM_RWR_RAWENTRIES,NULL,NULL) == 1);
         }
         arraylen++;
         count--;
@@ -3548,11 +3548,9 @@ void xautoclaimCommand(client *c) {
  * of items actually deleted, that may be different from the number
  * of IDs passed in case certain IDs do not exist. */
 void xdelCommand(client *c) {
-    robj *o;
-
-    if ((o = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL
-        || checkType(c,o,OBJ_STREAM)) return;
-    stream *s = o->ptr;
+    kvobj *kv = lookupKeyWriteOrReply(c, c->argv[1], shared.czero); 
+    if (kv == NULL || checkType(c, kv, OBJ_STREAM)) return;
+    stream *s = kv->ptr;
 
     /* We need to sanity check the IDs passed to start. Even if not
      * a big issue, it is not great that the command is only partially
@@ -3630,8 +3628,6 @@ cleanup:
  *                             Has meaning only if `~` was provided.
  */
 void xtrimCommand(client *c) {
-    robj *o;
-
     /* Argument parsing. */
     streamAddTrimArgs parsed_args;
     if (streamParseAddOrTrimArgsOrReply(c, &parsed_args, 0) < 0)
@@ -3639,9 +3635,9 @@ void xtrimCommand(client *c) {
 
     /* If the key does not exist, we are ok returning zero, that is, the
      * number of elements removed from the stream. */
-    if ((o = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL
-        || checkType(c,o,OBJ_STREAM)) return;
-    stream *s = o->ptr;
+    kvobj *kv = lookupKeyWriteOrReply(c, c->argv[1], shared.czero); 
+    if (kv == NULL || checkType(c, kv, OBJ_STREAM)) return;
+    stream *s = kv->ptr;
 
     /* Perform the trimming. */
     int64_t deleted = streamTrim(s, &parsed_args);
@@ -3901,9 +3897,9 @@ NULL
     key = c->argv[2];
 
     /* Lookup the key now, this is common for all the subcommands but HELP. */
-    robj *o = lookupKeyReadOrReply(c,key,shared.nokeyerr);
-    if (o == NULL || checkType(c,o,OBJ_STREAM)) return;
-    s = o->ptr;
+    kvobj *kv = lookupKeyReadOrReply(c, key, shared.nokeyerr);
+    if (kv == NULL || checkType(c, kv, OBJ_STREAM)) return;
+    s = kv->ptr;
 
     /* Dispatch the different subcommands. */
     if (!strcasecmp(opt,"CONSUMERS") && c->argc == 4) {

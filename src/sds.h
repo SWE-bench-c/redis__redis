@@ -198,6 +198,7 @@ sds sdsnew(const char *init);
 sds sdsempty(void);
 sds sdsdup(const sds s);
 void sdsfree(sds s);
+size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, sds s, uint8_t *hdr_size);
 void sdsfreegeneric(void *s);
 sds sdsgrowzero(sds s, size_t len);
 sds sdscatlen(sds s, const void *t, size_t len);

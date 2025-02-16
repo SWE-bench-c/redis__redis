@@ -2,7 +2,10 @@
  *
  * Copyright (c) 2006-Present, Redis Ltd.
  * All rights reserved.
- *
+ * 
+ * Copyright (c) 2024-present, Valkey contributors.
+ * All rights reserved.
+ * 
  * Licensed under your choice of the Redis Source Available License 2.0
  * (RSALv2) or the Server Side Public License v1 (SSPLv1).
  */
@@ -474,6 +477,20 @@ sds sdscatlen(sds s, const void *t, size_t len) {
     sdssetlen(s, curlen+len);
     s[curlen+len] = '\0';
     return s;
+}
+
+/* This method copies the sds `s` into `buf` which is the target character buffer. */
+size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, const sds s, uint8_t *hdr_size) {
+    /* min amount of bytes required to store the sds header + data + NULL */
+    size_t sdsminlen = sdslen(s) + sdsHdrSize(s[-1]) + 1;
+    size_t required_keylen = sdsminlen;
+    if (buf == NULL) {
+        return required_keylen;
+    }
+    assert(buf_len >= required_keylen);
+    memcpy(buf, sdsAllocPtr(s), required_keylen);
+    *hdr_size = sdsHdrSize(s[-1]);
+    return required_keylen;
 }
 
 /* Append the specified null terminated C string to the sds string 's'.

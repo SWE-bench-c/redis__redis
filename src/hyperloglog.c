@@ -1413,24 +1413,25 @@ invalid:
 
 /* PFADD var ele ele ele ... ele => :0 or :1 */
 void pfaddCommand(client *c) {
-    robj *o = lookupKeyWrite(c->db,c->argv[1]);
+    
+    kvobj *kv = lookupKeyWrite(c->db,c->argv[1]);
     struct hllhdr *hdr;
     int updated = 0, j;
 
-    if (o == NULL) {
+    if (kv == NULL) {
         /* Create the key with a string value of the exact length to
          * hold our HLL data structure. sdsnewlen() when NULL is passed
          * is guaranteed to return bytes initialized to zero. */
-        o = createHLLObject();
-        dbAdd(c->db,c->argv[1],o);
+        robj *o = createHLLObject();
+        kv = dbAdd(c->db, c->argv[1], &o);
         updated++;
     } else {
-        if (isHLLObjectOrReply(c,o) != C_OK) return;
-        o = dbUnshareStringValue(c->db,c->argv[1],o);
+        if (isHLLObjectOrReply(c,kv) != C_OK) return;
+        kv = dbUnshareStringValue(c->db,c->argv[1],kv);
     }
     /* Perform the low level ADD operation for every element. */
     for (j = 2; j < c->argc; j++) {
-        int retval = hllAdd(o, (unsigned char*)c->argv[j]->ptr,
+        int retval = hllAdd(kv, (unsigned char*)c->argv[j]->ptr,
                                sdslen(c->argv[j]->ptr));
         switch(retval) {
         case 1:
@@ -1441,7 +1442,7 @@ void pfaddCommand(client *c) {
             return;
         }
     }
-    hdr = o->ptr;
+    hdr = kv->ptr;
     if (updated) {
         HLL_INVALIDATE_CACHE(hdr);
         signalModifiedKey(c,c->db,c->argv[1]);
@@ -1453,7 +1454,7 @@ void pfaddCommand(client *c) {
 
 /* PFCOUNT var -> approximated cardinality of set. */
 void pfcountCommand(client *c) {
-    robj *o;
+    kvobj *kv;
     struct hllhdr *hdr;
     uint64_t card;
 
@@ -1472,13 +1473,13 @@ void pfcountCommand(client *c) {
         registers = max + HLL_HDR_SIZE;
         for (j = 1; j < c->argc; j++) {
             /* Check type and size. */
-            robj *o = lookupKeyRead(c->db,c->argv[j]);
-            if (o == NULL) continue; /* Assume empty HLL for non existing var.*/
-            if (isHLLObjectOrReply(c,o) != C_OK) return;
+            kvobj *kv = lookupKeyRead(c->db,c->argv[j]);
+            if (kv == NULL) continue; /* Assume empty HLL for non existing var.*/
+            if (isHLLObjectOrReply(c, kv) != C_OK) return;
 
             /* Merge with this HLL with our 'max' HLL by setting max[i]
              * to MAX(max[i],hll[i]). */
-            if (hllMerge(registers,o) == C_ERR) {
+            if (hllMerge(registers, kv) == C_ERR) {
                 addReplyError(c,invalid_hll_err);
                 return;
             }
@@ -1500,17 +1501,17 @@ void pfcountCommand(client *c) {
      * logically expired key on a replica is deleted, while with lookupKeyRead
      * it isn't, but the lookup returns NULL either way if the key is logically
      * expired, which is what matters here. */
-    o = lookupKeyRead(c->db,c->argv[1]);
-    if (o == NULL) {
+    kv = lookupKeyRead(c->db, c->argv[1]);
+    if (kv == NULL) {
         /* No key? Cardinality is zero since no element was added, otherwise
          * we would have a key as HLLADD creates it as a side effect. */
         addReply(c,shared.czero);
     } else {
-        if (isHLLObjectOrReply(c,o) != C_OK) return;
-        o = dbUnshareStringValue(c->db,c->argv[1],o);
+        if (isHLLObjectOrReply(c, kv) != C_OK) return;
+        kv = dbUnshareStringValue(c->db, c->argv[1], kv);
 
         /* Check if the cached cardinality is valid. */
-        hdr = o->ptr;
+        hdr = kv->ptr;
         if (HLL_VALID_CACHE(hdr)) {
             /* Just return the cached value. */
             card = (uint64_t)hdr->card[0];
@@ -1560,41 +1561,41 @@ void pfmergeCommand(client *c) {
     memset(max,0,sizeof(max));
     for (j = 1; j < c->argc; j++) {
         /* Check type and size. */
-        robj *o = lookupKeyRead(c->db,c->argv[j]);
-        if (o == NULL) continue; /* Assume empty HLL for non existing var. */
-        if (isHLLObjectOrReply(c,o) != C_OK) return;
+        kvobj *kv = lookupKeyRead(c->db, c->argv[j]);
+        if (kv == NULL) continue; /* Assume empty HLL for non existing var. */
+        if (isHLLObjectOrReply(c, kv) != C_OK) return;
 
         /* If at least one involved HLL is dense, use the dense representation
          * as target ASAP to save time and avoid the conversion step. */
-        hdr = o->ptr;
+        hdr = kv->ptr;
         if (hdr->encoding == HLL_DENSE) use_dense = 1;
 
         /* Merge with this HLL with our 'max' HLL by setting max[i]
          * to MAX(max[i],hll[i]). */
-        if (hllMerge(max,o) == C_ERR) {
+        if (hllMerge(max, kv) == C_ERR) {
             addReplyError(c,invalid_hll_err);
             return;
         }
     }
 
     /* Create / unshare the destination key's value if needed. */
-    robj *o = lookupKeyWrite(c->db,c->argv[1]);
-    if (o == NULL) {
+    kvobj *kv = lookupKeyWrite(c->db,c->argv[1]);
+    if (kv == NULL) {
         /* Create the key with a string value of the exact length to
          * hold our HLL data structure. sdsnewlen() when NULL is passed
          * is guaranteed to return bytes initialized to zero. */
-        o = createHLLObject();
-        dbAdd(c->db,c->argv[1],o);
+        robj *o = createHLLObject();
+        kv = dbAdd(c->db, c->argv[1], &o);
     } else {
         /* If key exists we are sure it's of the right type/size
          * since we checked when merging the different HLLs, so we
          * don't check again. */
-        o = dbUnshareStringValue(c->db,c->argv[1],o);
+        kv = dbUnshareStringValue(c->db,c->argv[1],kv);
     }
 
     /* Convert the destination object to dense representation if at least
      * one of the inputs was dense. */
-    if (use_dense && hllSparseToDense(o) == C_ERR) {
+    if (use_dense && hllSparseToDense(kv) == C_ERR) {
         addReplyError(c,invalid_hll_err);
         return;
     }
@@ -1602,19 +1603,19 @@ void pfmergeCommand(client *c) {
     /* Write the resulting HLL to the destination HLL registers and
      * invalidate the cached value. */
     if (use_dense) {
-        hdr = o->ptr;
+        hdr = kv->ptr;
         hllDenseCompress(hdr->registers, max);
     } else {
         for (j = 0; j < HLL_REGISTERS; j++) {
             if (max[j] == 0) continue;
-            hdr = o->ptr;
+            hdr = kv->ptr;
             switch (hdr->encoding) {
                 case HLL_DENSE: hllDenseSet(hdr->registers,j,max[j]); break;
-                case HLL_SPARSE: hllSparseSet(o,j,max[j]); break;
+                case HLL_SPARSE: hllSparseSet(kv,j,max[j]); break;
             }
         }
     }
-    hdr = o->ptr; /* o->ptr may be different now, as a side effect of
+    hdr = kv->ptr; /* o->ptr may be different now, as a side effect of
                      last hllSparseSet() call. */
     HLL_INVALIDATE_CACHE(hdr);
 
@@ -1745,7 +1746,7 @@ cleanup:
 void pfdebugCommand(client *c) {
     char *cmd = c->argv[1]->ptr;
     struct hllhdr *hdr;
-    robj *o;
+    kvobj *kv;
     int j;
 
     if (!strcasecmp(cmd, "simd")) {
@@ -1768,28 +1769,28 @@ void pfdebugCommand(client *c) {
         return;
     }
 
-    o = lookupKeyWrite(c->db,c->argv[2]);
-    if (o == NULL) {
+    kv = lookupKeyWrite(c->db,c->argv[2]);
+    if (kv == NULL) {
         addReplyError(c,"The specified key does not exist");
         return;
     }
-    if (isHLLObjectOrReply(c,o) != C_OK) return;
-    o = dbUnshareStringValue(c->db,c->argv[2],o);
-    hdr = o->ptr;
+    if (isHLLObjectOrReply(c,kv) != C_OK) return;
+    kv = dbUnshareStringValue(c->db,c->argv[2],kv);
+    hdr = kv->ptr;
 
     /* PFDEBUG GETREG <key> */
     if (!strcasecmp(cmd,"getreg")) {
         if (c->argc != 3) goto arityerr;
 
         if (hdr->encoding == HLL_SPARSE) {
-            if (hllSparseToDense(o) == C_ERR) {
+            if (hllSparseToDense(kv) == C_ERR) {
                 addReplyError(c,invalid_hll_err);
                 return;
             }
             server.dirty++; /* Force propagation on encoding change. */
         }
 
-        hdr = o->ptr;
+        hdr = kv->ptr;
         addReplyArrayLen(c,HLL_REGISTERS);
         for (j = 0; j < HLL_REGISTERS; j++) {
             uint8_t val;
@@ -1802,7 +1803,7 @@ void pfdebugCommand(client *c) {
     else if (!strcasecmp(cmd,"decode")) {
         if (c->argc != 3) goto arityerr;
 
-        uint8_t *p = o->ptr, *end = p+sdslen(o->ptr);
+        uint8_t *p = kv->ptr, *end = p+sdslen(kv->ptr);
         sds decoded = sdsempty();
 
         if (hdr->encoding != HLL_SPARSE) {
@@ -1847,7 +1848,7 @@ void pfdebugCommand(client *c) {
         if (c->argc != 3) goto arityerr;
 
         if (hdr->encoding == HLL_SPARSE) {
-            if (hllSparseToDense(o) == C_ERR) {
+            if (hllSparseToDense(kv) == C_ERR) {
                 addReplyError(c,invalid_hll_err);
                 return;
             }

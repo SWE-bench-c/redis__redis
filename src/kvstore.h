@@ -73,7 +73,6 @@ void kvstoreReleaseDictIterator(kvstoreDictIterator *kvs_id);
 dictEntry *kvstoreDictIteratorNext(kvstoreDictIterator *kvs_di);
 dictEntry *kvstoreDictGetRandomKey(kvstore *kvs, int didx);
 dictEntry *kvstoreDictGetFairRandomKey(kvstore *kvs, int didx);
-dictEntry *kvstoreDictFindByHashAndPtr(kvstore *kvs, int didx, const void *oldptr, uint64_t hash);
 unsigned int kvstoreDictGetSomeKeys(kvstore *kvs, int didx, dictEntry **des, unsigned int count);
 int kvstoreDictExpand(kvstore *kvs, int didx, unsigned long size);
 unsigned long kvstoreDictScanDefrag(kvstore *kvs, int didx, unsigned long v, dictScanFunction *fn, dictDefragFunctions *defragfns, void *privdata);
@@ -82,13 +81,18 @@ void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn);
 void *kvstoreDictFetchValue(kvstore *kvs, int didx, const void *key);
 dictEntry *kvstoreDictFind(kvstore *kvs, int didx, void *key);
 dictEntry *kvstoreDictAddRaw(kvstore *kvs, int didx, void *key, dictEntry **existing);
-void kvstoreDictSetKey(kvstore *kvs, int didx, dictEntry* de, void *key);
-void kvstoreDictSetVal(kvstore *kvs, int didx, dictEntry *de, void *val);
-dictEntry *kvstoreDictTwoPhaseUnlinkFind(kvstore *kvs, int didx, const void *key, dictEntry ***plink, int *table_index);
-void kvstoreDictTwoPhaseUnlinkFree(kvstore *kvs, int didx, dictEntry *he, dictEntry **plink, int table_index);
+dictEntry *kvstoreDictTwoPhaseUnlinkFind(kvstore *kvs, int didx, const void *key, dictEntLink *plink, int *table_index);
+void kvstoreDictTwoPhaseUnlinkFree(kvstore *kvs, int didx, dictEntry *he, dictEntLink plink, int table_index);
 int kvstoreDictDelete(kvstore *kvs, int didx, const void *key);
 kvstoreDictMetadata *kvstoreGetDictMetadata(kvstore *kvs, int didx);
 kvstoreMetadata *kvstoreGetMetadata(kvstore *kvs);
+
+dictEntLink kvstoreDictFindLink(kvstore *kvs, int didx, void *key, dictEntLink *bucket);
+void kvstoreDictSetKeyAtLink(kvstore *kvs, int didx, void *kv, dictEntLink *link, int newItem);
+
+/* dict with distinct key & value API (no_value=1. Used only by pubsub) */
+void kvstoreDictSetKey(kvstore *kvs, int didx, dictEntry* de, void *key);
+void kvstoreDictSetVal(kvstore *kvs, int didx, dictEntry *de, void *val);
 
 #ifdef REDIS_TEST
 int kvstoreTest(int argc, char *argv[], int flags);
