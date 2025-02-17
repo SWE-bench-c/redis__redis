@@ -5,11 +5,16 @@
  * We do that by scanning the keyspace and for each pointer we have, we can try to
  * ask the allocator if moving it to a new address will help reduce fragmentation.
  *
- * Copyright (c) 2020-Present, Redis Ltd.
+ * Copyright (c) 2009-Present, Redis Ltd.
+ * All rights reserved.
+ *
+ * Copyright (c) 2024-present, Valkey contributors.
  * All rights reserved.
  *
  * Licensed under your choice of the Redis Source Available License 2.0
  * (RSALv2) or the Server Side Public License v1 (SSPLv1).
+ *
+ * Portions of this file are available under BSD3 terms; see REDISCONTRIBUTIONS for more information.
  */
 
 #include "server.h"
@@ -23,20 +28,14 @@ typedef enum { DEFRAG_NOT_DONE = 0,
 
 /*
  * Defragmentation is performed in stages. Each stage is serviced by a stage function
- * (defragStageFn). The stage function is passed a target (void*) to defrag. The contents of that
- * target are unique to the particular stage - and may even be NULL for some stage functions. The
+ * (defragStageFn). The stage function is passed a context (void*) to defrag. The contents of that
+ * context are unique to the particular stage - and may even be NULL for some stage functions. The
  * same stage function can be used multiple times (for different stages) each having a different
- * target.
- *
- * The stage function is required to maintain an internal static state. This allows the stage
- * function to continue when invoked in an iterative manner. When invoked with a 0 endtime, the
- * stage function is required to clear it's internal state and prepare to begin a new stage. It
- * should return false (more work to do) as it should NOT perform any real "work" during init.
+ * context.
  *
  * Parameters:
  *  endtime     - This is the monotonic time that the function should end and return. This ensures
- *                a bounded latency due to defrag. When endtime is 0, the internal state should be
- *                cleared, preparing to begin the stage with a new target.
+ *                a bounded latency due to defrag.
  *  ctx         - A pointer to context which is unique to the stage function.
  *
  * Returns:
@@ -60,7 +59,7 @@ struct DefragContext {
     float decay_rate;               /* Defrag speed decay rate */
 
     list *remaining_stages;         /* List of stages which remain to be processed */
-    StageDescriptor *current_stage; /* The stage that's currently being processed */
+    listNode *current_stage;        /* The list node of stage that's currently being processed */
 
     long long timeproc_id;      /* Eventloop ID of the timerproc (or AE_DELETED_EVENT_ID) */
     monotime timeproc_end_time; /* Ending time of previous timerproc execution */
@@ -468,7 +467,7 @@ void activeDefragQuickListNodes(quicklist *ql) {
 void defragLater(dictEntry *kde) {
     if (!defrag_later) {
         defrag_later = listCreate();
-        listSetFreeMethod(defrag_later, (void (*)(void *))sdsfree);
+        listSetFreeMethod(defrag_later, sdsfreegeneric);
         defrag_later_cursor = 0;
     }
     sds key = sdsdup(dictGetKey(kde));
@@ -1129,7 +1128,7 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
         state->slot = KVS_SLOT_UNASSIGNED;
     }
 
-    while (true) {
+    while (1) {
         if (++iterations > 16 || server.stat_active_defrag_hits - prev_defragged > 512 || server.stat_active_defrag_scanned - prev_scanned > 64) {
             if (getMonotonicUs() >= endtime) break;
             iterations = 0;
@@ -1160,7 +1159,6 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
     return DEFRAG_NOT_DONE;
 }
 
-/* Target is a DBID */
 static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
     defragKeysCtx *defrag_keys_ctx = ctx;
     redisDb *db = &server.db[defrag_keys_ctx->dbid];
@@ -1280,10 +1278,9 @@ static void endDefragCycle(int normal_termination) {
         aeDeleteTimeEvent(server.el, defrag.timeproc_id);
 
         if (defrag.current_stage) {
-            freeDefragContext(defrag.current_stage);
+            listDelNode(defrag.remaining_stages, defrag.current_stage);
             defrag.current_stage = NULL;
         }
-        listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
     }
     defrag.timeproc_id = AE_DELETED_EVENT_ID;
 
@@ -1404,7 +1401,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
 
     if (!server.active_defrag_enabled) {
         /* Defrag has been disabled while running */
-        endDefragCycle(false);
+        endDefragCycle(0);
         return AE_NOMORE;
     }
 
@@ -1417,7 +1414,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
     monotime starttime = getMonotonicUs();
     int dutyCycleUs = computeDefragCycleUs();
     monotime endtime = starttime + dutyCycleUs;
-    int haveMoreWork = true;
+    int haveMoreWork = 1;
 
     /* Increment server.cronloops so that run_with_period works. */
     long hz_ms = 1000 / server.hz;
@@ -1430,13 +1427,13 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
 
     do {
         if (!defrag.current_stage) {
-            defrag.current_stage = listNodeValue(listFirst(defrag.remaining_stages));
-            listDelNode(defrag.remaining_stages, listFirst(defrag.remaining_stages));
+            defrag.current_stage = listFirst(defrag.remaining_stages);
         }
 
-        doneStatus status = defrag.current_stage->stage_fn(endtime, defrag.current_stage->ctx);
+        StageDescriptor *stage = listNodeValue(defrag.current_stage);
+        doneStatus status = stage->stage_fn(endtime, stage->ctx);
         if (status == DEFRAG_DONE) {
-            freeDefragContext(defrag.current_stage);
+            listDelNode(defrag.remaining_stages, defrag.current_stage);
             defrag.current_stage = NULL;
         }
 
@@ -1452,7 +1449,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
     if (haveMoreWork) {
         return computeDelayMs(endtime);
     } else {
-        endDefragCycle(true);
+        endDefragCycle(1);
         return AE_NOMORE; /* Ends the timer proc */
     }
 }
@@ -1486,6 +1483,7 @@ static void beginDefragCycle(void) {
 
     serverAssert(defrag.remaining_stages == NULL);
     defrag.remaining_stages = listCreate();
+    listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
 
     for (int dbid = 0; dbid < server.dbnum; dbid++) {
         redisDb *db = &server.db[dbid];
