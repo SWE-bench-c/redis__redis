@@ -112,9 +112,9 @@ typedef struct {
 static_assert(offsetof(defragPubSubCtx, kvstate) == 0, "defragStageKvstoreHelper requires this");
 
 typedef struct {
-    RedisModule *module;
     RedisModuleDefragCtx module_ctx;
     unsigned long cursor;
+    char module_name[];
 } defragModuleCtx;
 
 /* When scanning a main kvstore, large elements are queued for later handling rather than
@@ -1219,12 +1219,20 @@ static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
 static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
     defragModuleCtx *defrag_module_ctx = ctx;
 
+    sds module_name = sdsnew(defrag_module_ctx->module_name);
+    RedisModule *module = moduleGetHandleByName(module_name);
+    sdsfree(module_name);
+    if (!module) {
+        /* Module has been unloaded, nothing to defrag. */
+        return DEFRAG_DONE;
+    }
+
     /* Set up context for the module's defrag callback. */
     defrag_module_ctx->module_ctx.endtime = endtime;
     defrag_module_ctx->module_ctx.cursor = &defrag_module_ctx->cursor;
 
     /* Call the module's defrag callback function and check if more work remains. */
-    if (defrag_module_ctx->module->defrag_cb_2(&defrag_module_ctx->module_ctx) != 0)
+    if (module->defrag_cb_2(&defrag_module_ctx->module_ctx) != 0)
         return DEFRAG_NOT_DONE;
 
     return DEFRAG_DONE;
@@ -1519,9 +1527,9 @@ static void beginDefragCycle(void) {
     while ((de = dictNext(di)) != NULL) {
         struct RedisModule *module = dictGetVal(de);
         if (module->defrag_cb_2) {
-            defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx));
-            ctx->module = module;
+            defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx) + strlen(module->name) + 1);
             ctx->cursor = 0;
+            redis_strlcpy(ctx->module_name,module->name,strlen(module->name)+1);
             addDefragStage(defragModuleGlobals, ctx);
         }
     }
