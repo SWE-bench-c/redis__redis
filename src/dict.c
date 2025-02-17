@@ -74,7 +74,7 @@ static int dictDefaultCompare(dict *d, const void *key1, const void *key2);
 
 typedef int (*keyCmpFunc)(dict *d, const void *key1, const void *key2);
 typedef size_t (*keyLenFunc)(dict *d, const void *key1);
-typedef int (*keyCmpFuncWithLen)(dict *d, const void *key1, const void *key2, const size_t key1Len,const size_t key2Len);
+typedef int (*keyCmpFuncWithLen)(dict *d, const void *key1, const size_t key1Len, const void *key2, const size_t key2Len);
 static inline keyCmpFunc dictGetKeyCmpFunc(dict *d) {
     if (d->useStoredKeyApi && d->type->storedKeyCompare)
         return d->type->storedKeyCompare;
