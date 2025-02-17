@@ -13940,12 +13940,12 @@ typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *k
  * returning the next position to seek to.
  */
 RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString **seekTo) {
+    RedisModuleDict *newdict = NULL;
     raxIterator ri;
 
     raxStart(&ri,dict->rax);
     if (*seekTo == NULL) {
         /* if last seek is NULL, we start new iteration */
-        RedisModuleDict *newdict = NULL;
         rax* newrax = NULL;
         if ((newdict = activeDefragAlloc(dict)))
             dict = newdict;
@@ -13960,7 +13960,7 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
         if (!raxSeek(&ri,">", (*seekTo)->ptr, sdslen((*seekTo)->ptr))) {
             *seekTo = NULL;
             raxStop(&ri);
-            return dict;
+            return NULL;
         }
         /* assign the iterator node callback after the seek, so that the
          * initial nodes that are processed till now aren't covered */
@@ -13975,12 +13975,12 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
             if (*seekTo) RM_FreeString(NULL, *seekTo);
             *seekTo = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
             raxStop(&ri);
-            return dict;
+            return newdict;
         }
     }
     *seekTo = NULL;
     raxStop(&ri);
-    return dict;
+    return newdict;
 }
 
 /* Perform a late defrag of a module datatype key.
