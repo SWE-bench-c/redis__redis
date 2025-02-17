@@ -1217,7 +1217,6 @@ static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
 /* Handles defragmentation of module global data. This is a stage function
  * that gets called periodically during the active defragmentation process. */
 static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
-    UNUSED(endtime);
     defragModuleCtx *defrag_module_ctx = ctx;
 
     /* Set up context for the module's defrag callback. */
