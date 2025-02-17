@@ -21,10 +21,11 @@ unsigned long int datatype_defragged = 0;
 unsigned long int datatype_raw_defragged = 0;
 unsigned long int datatype_resumes = 0;
 unsigned long int datatype_wrong_cursor = 0;
-unsigned long int global_strings_attempts = 0;
 unsigned long int defrag_started = 0;
 unsigned long int defrag_ended = 0;
+unsigned long int global_strings_attempts = 0;
 unsigned long int global_strings_defragged = 0;
+unsigned long int global_strings_pauses = 0;
 unsigned long int global_dicts_attempts = 0;
 unsigned long int global_dicts_defragged = 0;
 unsigned long int global_dicts_pauses = 0;
@@ -60,6 +61,7 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
         }
 
         if (RedisModule_DefragShouldStop(ctx)) {
+            global_strings_pauses++;
             RedisModule_DefragCursorSet(ctx, cursor);
             return 1;
         }
@@ -163,6 +165,7 @@ static void FragInfo(RedisModuleInfoCtx *ctx, int for_crash_report) {
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_wrong_cursor", datatype_wrong_cursor);
     RedisModule_InfoAddFieldLongLong(ctx, "global_strings_attempts", global_strings_attempts);
     RedisModule_InfoAddFieldLongLong(ctx, "global_strings_defragged", global_strings_defragged);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_strings_pauses", global_strings_pauses);
     RedisModule_InfoAddFieldLongLong(ctx, "global_dicts_attempts", global_dicts_attempts);
     RedisModule_InfoAddFieldLongLong(ctx, "global_dicts_defragged", global_dicts_defragged);
     RedisModule_InfoAddFieldLongLong(ctx, "global_dicts_pauses", global_dicts_pauses);
@@ -195,6 +198,7 @@ static int fragResetStatsCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
     datatype_wrong_cursor = 0;
     global_strings_attempts = 0;
     global_strings_defragged = 0;
+    global_strings_pauses = 0;
     global_dicts_attempts = 0;
     global_dicts_defragged = 0;
     global_dicts_pauses = 0;
@@ -356,7 +360,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         return REDISMODULE_ERR;
 
     RedisModule_RegisterInfoFunc(ctx, FragInfo);
-    RedisModule_RegisterDefragFunc(ctx, defragGlobal);
+    RedisModule_RegisterDefragFunc2(ctx, defragGlobal);
     RedisModule_RegisterDefragCallbacks(ctx, defragStart, defragEnd);
 
     return REDISMODULE_OK;

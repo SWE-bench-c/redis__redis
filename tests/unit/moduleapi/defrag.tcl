@@ -47,6 +47,7 @@ start_server {tags {"modules"} overrides {{save ""}}} {
             after 2000
             set info [r info defragtest_stats]
             assert {[getInfoProperty $info defragtest_global_strings_attempts] > 0}
+            assert {[getInfoProperty $info defragtest_global_strings_pauses] > 0}
             assert {[getInfoProperty $info defragtest_global_dicts_attempts] > 0}
             assert {[getInfoProperty $info defragtest_global_dicts_pauses] > 0}
             assert_morethan [getInfoProperty $info defragtest_defrag_started] 0
