@@ -651,6 +651,7 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         r flushdb
         r function flush
 
+        set lines [count_log_lines 0]
         set dir [lindex [r config get dir] 1]
 
         assert_equal "OK" [r debug populate 100000 key 1000]
@@ -662,6 +663,12 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         }
         catch {run_cli {*}$args} output
         assert_match {*Transfer finished with success*} $output
+
+        # If sever enabled diskless sync, it should transfer the RDB by RDB channel
+        # since redis-cli sent `replconf rdb-channel 1` to ask for RDB channel.
+        if {[r config get repl-diskless-sync] == "yes"} {
+            verify_log_message 0 "*replicas sockets (rdb-channel)*" $lines
+        }
 
         file delete "$dir/dump.rdb"
         file rename "$dir/cli.rdb" "$dir/dump.rdb"
