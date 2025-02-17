@@ -1312,7 +1312,7 @@ REDISMODULE_API void *(*RedisModule_DefragAlloc)(RedisModuleDefragCtx *ctx, void
 REDISMODULE_API void *(*RedisModule_DefragAllocRaw)(RedisModuleDefragCtx *ctx, size_t size) REDISMODULE_ATTR;
 REDISMODULE_API void (*RedisModule_DefragFreeRaw)(RedisModuleDefragCtx *ctx, void *ptr) REDISMODULE_ATTR;
 REDISMODULE_API RedisModuleString *(*RedisModule_DefragRedisModuleString)(RedisModuleDefragCtx *ctx, RedisModuleString *str) REDISMODULE_ATTR;
-REDISMODULE_API RedisModuleDict *(*RedisModule_DefragRedisModuleDict)(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) REDISMODULE_ATTR;
+REDISMODULE_API RedisModuleDict *(*RedisModule_DefragRedisModuleDict)(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString **seekTo) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_DefragShouldStop)(RedisModuleDefragCtx *ctx) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_DefragCursorSet)(RedisModuleDefragCtx *ctx, unsigned long cursor) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_DefragCursorGet)(RedisModuleDefragCtx *ctx, unsigned long *cursor) REDISMODULE_ATTR;

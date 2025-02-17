@@ -93,17 +93,14 @@ static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
     RedisModule_DefragCursorGet(ctx, &cursor);
     RedisModule_Assert(cursor < global_dicts_len);
     for (; cursor < global_strings_len; cursor++) {
-        RedisModuleString *nextSeekTo = NULL;
-        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, global_dicts[cursor], defragGlobalDictValueCB, seekTo, &nextSeekTo);
+        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, global_dicts[cursor], defragGlobalDictValueCB, &seekTo);
         global_dicts_attempts++;
         if (new != NULL) {
             global_dicts[cursor] = new;
             global_dicts_defragged++;
         }
 
-        if (seekTo) RedisModule_FreeString(NULL, seekTo);
-        seekTo = nextSeekTo;
-        if (nextSeekTo != NULL) {
+        if (seekTo != NULL) {
             RedisModule_DefragCursorSet(ctx, cursor);
             return 1;
         }

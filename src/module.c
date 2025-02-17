@@ -13939,12 +13939,11 @@ typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *k
  * The function can work incrementally by accepting a seek position to continue from, and
  * returning the next position to seek to.
  */
-RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) {
+RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString **seekTo) {
     raxIterator ri;
-    if (nextToSeek) *nextToSeek = NULL;
 
     raxStart(&ri,dict->rax);
-    if (seekTo == NULL) {
+    if (*seekTo == NULL) {
         /* if last seek is NULL, we start new iteration */
         RedisModuleDict *newdict = NULL;
         rax* newrax = NULL;
@@ -13958,7 +13957,8 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
         raxSeek(&ri,"^",NULL,0);
     } else {
         /* if cursor is non-zero, we seek to the static 'last' */
-        if (!raxSeek(&ri,">", seekTo->ptr, sdslen(seekTo->ptr))) {
+        if (!raxSeek(&ri,">", (*seekTo)->ptr, sdslen((*seekTo)->ptr))) {
+            *seekTo = NULL;
             raxStop(&ri);
             return dict;
         }
@@ -13972,11 +13972,13 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
         if (newdata)
             raxSetData(ri.node, ri.data=newdata);
         if (RM_DefragShouldStop(ctx)) {
-            *nextToSeek = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
+            if (*seekTo) RM_FreeString(NULL, *seekTo);
+            *seekTo = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
             raxStop(&ri);
             return dict;
         }
     }
+    *seekTo = NULL;
     raxStop(&ri);
     return dict;
 }
