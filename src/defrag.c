@@ -1225,7 +1225,7 @@ static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
     defrag_module_ctx->module_ctx.cursor = &defrag_module_ctx->cursor;
 
     /* Call the module's defrag callback function and check if more work remains. */
-    if (defrag_module_ctx->module->defrag_cb(&defrag_module_ctx->module_ctx) != 0)
+    if (defrag_module_ctx->module->defrag_cb_2(&defrag_module_ctx->module_ctx) != 0)
         return DEFRAG_NOT_DONE;
 
     return DEFRAG_DONE;
@@ -1519,7 +1519,7 @@ static void beginDefragCycle(void) {
     dictEntry *de;
     while ((de = dictNext(di)) != NULL) {
         struct RedisModule *module = dictGetVal(de);
-        if (module->defrag_cb) {
+        if (module->defrag_cb_2) {
             defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx));
             ctx->module = module;
             ctx->cursor = 0;

@@ -267,7 +267,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         return REDISMODULE_ERR;
 
     RedisModule_RegisterInfoFunc(ctx, FragInfo);
-    RedisModule_RegisterDefragFunc(ctx, defragGlobalStrings);
+    RedisModule_RegisterDefragFunc2(ctx, defragGlobalStrings);
     RedisModule_RegisterDefragCallbacks(ctx, defragStart, defragEnd);
 
     return REDISMODULE_OK;

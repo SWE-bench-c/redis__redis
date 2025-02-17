@@ -2309,6 +2309,7 @@ void RM_SetModuleAttribs(RedisModuleCtx *ctx, const char *name, int ver, int api
     module->options = 0;
     module->info_cb = 0;
     module->defrag_cb = 0;
+    module->defrag_cb_2 = 0;
     module->defrag_start_cb = 0;
     module->defrag_end_cb = 0;
     module->loadmod = NULL;
@@ -13791,6 +13792,14 @@ int RM_RegisterDefragFunc(RedisModuleCtx *ctx, RedisModuleDefragFunc cb) {
     return REDISMODULE_OK;
 }
 
+/* Register a defrag callback for global data, i.e. anything that the module
+ * may allocate that is not tied to a specific data type.
+ */
+int RM_RegisterDefragFunc2(RedisModuleCtx *ctx, RedisModuleDefragFunc2 cb) {
+    ctx->module->defrag_cb_2 = cb;
+    return REDISMODULE_OK;
+}
+
 /* Register a defrag callbacks that will be called when defrag operation starts and ends.
  *
  * The callbacks are the same as `RM_RegisterDefragFunc` but the user
@@ -14361,6 +14370,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(GetCurrentCommandName);
     REGISTER_API(GetTypeMethodVersion);
     REGISTER_API(RegisterDefragFunc);
+    REGISTER_API(RegisterDefragFunc2);
     REGISTER_API(RegisterDefragCallbacks);
     REGISTER_API(DefragAlloc);
     REGISTER_API(DefragAllocRaw);
