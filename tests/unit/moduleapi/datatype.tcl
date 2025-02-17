@@ -226,7 +226,7 @@ start_server {tags {"modules"}} {
 
                 # After the traffic disappears, the defragmentation speed will decrease again.
                 wait_for_condition 1000 50 {
-                    [s active_defrag_running] == 50
+                    [s active_defrag_running] == 25
                 } else {
                     fail "Unable to reduce the defragmentation speed after traffic disappears."
                 } 
