@@ -84,9 +84,7 @@ static inline keyCmpFunc dictGetKeyCmpFunc(dict *d) {
 }
 
 static inline keyCmpFuncWithLen dictGetKeyCmpFuncWithLen(dict *d) {
-    if (d->type->keyCompareWithLen)
-        return d->type->keyCompareWithLen;
-    return NULL;
+    return d->type->keyCompareWithLen;
 }
 
 static inline keyLenFunc dictGetKeyLenFunc(dict *d) {

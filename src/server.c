@@ -276,8 +276,7 @@ void dictDictDestructor(dict *d, void *val)
     dictRelease((dict*)val);
 }
 
-size_t dictSdsLen(dict *d, const void *key)
-{
+size_t dictSdsLen(dict *d, const void *key) {
     UNUSED(d);
 
     return sdslen((sds)key);
