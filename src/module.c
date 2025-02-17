@@ -13971,7 +13971,6 @@ RedisModuleDict* RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
         void *newdata = valueCB(ri.data, ri.key, ri.key_len);
         if (newdata)
             raxSetData(ri.node, ri.data=newdata);
-        server.stat_active_defrag_scanned++;
         if (RM_DefragShouldStop(ctx)) {
             *nextToSeek = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
             raxStop(&ri);
