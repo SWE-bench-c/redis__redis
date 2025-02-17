@@ -88,9 +88,7 @@ static inline keyCmpFuncWithLen dictGetKeyCmpFuncWithLen(dict *d) {
 }
 
 static inline keyLenFunc dictGetKeyLenFunc(dict *d) {
-    if (d->type->keyLen)
-        return d->type->keyLen;
-    return NULL;
+    return d->type->keyLen;
 }
 
 static inline uint64_t dictHashKey(dict *d, const void *key, int isStoredKey) {
@@ -793,8 +791,8 @@ dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
     /* Check if we can use the compare function with length to avoid recomputing length of key always */
     keyCmpFuncWithLen cmpFuncWithLen = dictGetKeyCmpFuncWithLen(d);
     keyLenFunc keyLenFunc = dictGetKeyLenFunc(d);
-    const int has_len_fn = (keyLenFunc!=NULL && cmpFuncWithLen != NULL);
-    const size_t keyLen = has_len_fn ? keyLenFunc(d,key) : 0;
+    const int has_len_fn = (keyLenFunc != NULL && cmpFuncWithLen != NULL);
+    const size_t key_len = has_len_fn ? keyLenFunc(d,key) : 0;
     for (table = 0; table <= 1; table++) {
         if (table == 0 && (long)idx < d->rehashidx) continue;
         idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
