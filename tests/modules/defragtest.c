@@ -21,10 +21,10 @@ unsigned long int datatype_defragged = 0;
 unsigned long int datatype_raw_defragged = 0;
 unsigned long int datatype_resumes = 0;
 unsigned long int datatype_wrong_cursor = 0;
-unsigned long int global_attempts = 0;
+unsigned long int global_strings_attempts = 0;
 unsigned long int defrag_started = 0;
 unsigned long int defrag_ended = 0;
-unsigned long int global_defragged = 0;
+unsigned long int global_strings_defragged = 0;
 
 unsigned long global_strings_len = 0;
 RedisModuleString **global_strings = NULL;
@@ -43,17 +43,16 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
 {
     unsigned long cursor = 0;
     RedisModule_DefragCursorGet(ctx, &cursor);
-
     RedisModule_Assert(cursor < global_strings_len);
     for (; cursor < global_strings_len; cursor++) {
         RedisModuleString *new = RedisModule_DefragRedisModuleString(ctx, global_strings[cursor]);
-        global_attempts++;
+        global_strings_attempts++;
         if (new != NULL) {
             global_strings[cursor] = new;
-            global_defragged++;
+            global_strings_defragged++;
         }
 
-        if (cursor % 16 == 0 && RedisModule_DefragShouldStop(ctx)) {
+        if (RedisModule_DefragShouldStop(ctx)) {
             RedisModule_DefragCursorSet(ctx, cursor);
             return 1;
         }
@@ -80,8 +79,8 @@ static void FragInfo(RedisModuleInfoCtx *ctx, int for_crash_report) {
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_raw_defragged", datatype_raw_defragged);
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_resumes", datatype_resumes);
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_wrong_cursor", datatype_wrong_cursor);
-    RedisModule_InfoAddFieldLongLong(ctx, "global_attempts", global_attempts);
-    RedisModule_InfoAddFieldLongLong(ctx, "global_defragged", global_defragged);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_strings_attempts", global_strings_attempts);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_strings_defragged", global_strings_defragged);
     RedisModule_InfoAddFieldLongLong(ctx, "defrag_started", defrag_started);
     RedisModule_InfoAddFieldLongLong(ctx, "defrag_ended", defrag_ended);
 }
@@ -109,8 +108,8 @@ static int fragResetStatsCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
     datatype_raw_defragged = 0;
     datatype_resumes = 0;
     datatype_wrong_cursor = 0;
-    global_attempts = 0;
-    global_defragged = 0;
+    global_strings_attempts = 0;
+    global_strings_defragged = 0;
     defrag_started = 0;
     defrag_ended = 0;
 
