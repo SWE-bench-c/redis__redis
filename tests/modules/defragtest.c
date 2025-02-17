@@ -93,7 +93,10 @@ static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
     unsigned long cursor = 0;
 
     RedisModule_DefragCursorGet(ctx, &cursor);
-    if (cursor == 0) dict_index = 0; /* Start a new defrag. */
+    if (cursor == 0) { /* Start a new defrag. */
+        seekTo = NULL;
+        dict_index = 0;
+    }
 
     RedisModule_Assert(dict_index < global_dicts_len);
     for (; dict_index < global_strings_len; dict_index++) {
