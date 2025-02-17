@@ -1225,8 +1225,7 @@ static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
     defrag_module_ctx->module_ctx.cursor = &defrag_module_ctx->cursor;
 
     /* Call the module's defrag callback function and check if more work remains. */
-    defrag_module_ctx->module->defrag_cb(&defrag_module_ctx->module_ctx);
-    if (defrag_module_ctx->cursor != 0)
+    if (defrag_module_ctx->module->defrag_cb(&defrag_module_ctx->module_ctx) != 0)
         return DEFRAG_NOT_DONE;
 
     return DEFRAG_DONE;

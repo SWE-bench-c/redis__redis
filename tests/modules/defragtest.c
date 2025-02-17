@@ -39,21 +39,26 @@ static void createGlobalStrings(RedisModuleCtx *ctx, unsigned long count)
     }
 }
 
-static void defragGlobalStrings(RedisModuleDefragCtx *ctx)
+static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
 {
     unsigned long cursor = 0;
     RedisModule_DefragCursorGet(ctx, &cursor);
 
     RedisModule_Assert(cursor < global_strings_len);
-    RedisModuleString *new = RedisModule_DefragRedisModuleString(ctx, global_strings[cursor]);
-    global_attempts++;
-    if (new != NULL) {
-        global_strings[cursor] = new;
-        global_defragged++;
-    }
+    for (; cursor < global_strings_len; cursor++) {
+        RedisModuleString *new = RedisModule_DefragRedisModuleString(ctx, global_strings[cursor]);
+        global_attempts++;
+        if (new != NULL) {
+            global_strings[cursor] = new;
+            global_defragged++;
+        }
 
-    cursor++;
-    RedisModule_DefragCursorSet(ctx, cursor == global_strings_len ? 0 : cursor);
+        if (cursor % 16 == 0 && RedisModule_DefragShouldStop(ctx)) {
+            RedisModule_DefragCursorSet(ctx, cursor);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void defragStart(RedisModuleDefragCtx *ctx) {
