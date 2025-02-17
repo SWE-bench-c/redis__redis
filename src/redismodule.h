@@ -841,7 +841,6 @@ typedef struct RedisModuleDefragCtx RedisModuleDefragCtx;
 typedef void (*RedisModuleInfoFunc)(RedisModuleInfoCtx *ctx, int for_crash_report);
 typedef void (*RedisModuleDefragFunc)(RedisModuleDefragCtx *ctx);
 typedef int (*RedisModuleDefragFunc2)(RedisModuleDefragCtx *ctx);
-typedef void (*RedisModuleDefragEventFunc)(RedisModuleDefragCtx *ctx);
 typedef void (*RedisModuleUserChangedFunc) (uint64_t client_id, void *privdata);
 
 /* ------------------------- End of common defines ------------------------ */
