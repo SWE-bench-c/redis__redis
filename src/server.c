@@ -7443,7 +7443,7 @@ int main(int argc, char **argv) {
             if (listener->ct == NULL)
                 continue;
 
-            serverLog(LL_NOTICE,"Ready to accept connections via %s", listener->ct->get_type(NULL));
+            serverLog(LL_NOTICE,"Ready to accept connections %s", listener->ct->get_type(NULL));
         }
 
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
