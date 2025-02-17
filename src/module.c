@@ -13929,8 +13929,16 @@ int moduleDefragRaxNode(raxNode **noderef) {
     return 0;
 }
 
-/* Defrag a RedisModuleDict previously allocated by RM_CreateDict. */
+/* Callback called per key in the dict, return value is non-NULL if the input value pointer was moved. */
 typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *key, size_t keylen);
+
+/* Defragment a Redis Module Dictionary by scanning its contents and calling a value
+ * callback for each value. Returns a new dict if it was re-allocated (will only
+ * be done when seekTo is NULL).
+ *
+ * The function can work incrementally by accepting a seek position to continue from, and
+ * returning the next position to seek to.
+ */
 RedisModuleDict* RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) {
     raxIterator ri;
     if (nextToSeek) *nextToSeek = NULL;
