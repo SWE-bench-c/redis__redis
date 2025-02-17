@@ -13939,7 +13939,7 @@ typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *k
  * The function can work incrementally by accepting a seek position to continue from, and
  * returning the next position to seek to.
  */
-RedisModuleDict* RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) {
+RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) {
     raxIterator ri;
     if (nextToSeek) *nextToSeek = NULL;
 
