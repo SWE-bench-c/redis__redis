@@ -88,23 +88,31 @@ static void *defragGlobalDictValueCB(void *data, unsigned char *key, size_t keyl
 
 static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
     static RedisModuleString *seekTo = NULL;
+    static unsigned long dict_index = 0;
     unsigned long cursor = 0;
 
     RedisModule_DefragCursorGet(ctx, &cursor);
-    RedisModule_Assert(cursor < global_dicts_len);
-    for (; cursor < global_strings_len; cursor++) {
-        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, global_dicts[cursor], defragGlobalDictValueCB, &seekTo);
+    if (cursor == 0) dict_index = 0; /* Start a new defrag. */
+
+    RedisModule_Assert(dict_index < global_dicts_len);
+    for (; dict_index < global_strings_len; dict_index++) {
+        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, global_dicts[dict_index], defragGlobalDictValueCB, &seekTo);
         global_dicts_attempts++;
         if (new != NULL) {
-            global_dicts[cursor] = new;
+            global_dicts[dict_index] = new;
             global_dicts_defragged++;
         }
 
         if (seekTo != NULL) {
-            RedisModule_DefragCursorSet(ctx, cursor);
+            /* Set cursor to 1 to indicate defragmentation is not finished. */
+            RedisModule_DefragCursorSet(ctx, 1);
             return 1;
         }
     }
+
+    /* Set cursor to 0 to indicate completion. */
+    dict_index = 0;
+    RedisModule_DefragCursorSet(ctx, 0);
     return 0;
 }
 
