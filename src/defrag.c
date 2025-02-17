@@ -1231,11 +1231,18 @@ static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
     defrag_module_ctx->module_ctx.endtime = endtime;
     defrag_module_ctx->module_ctx.cursor = &defrag_module_ctx->cursor;
 
-    /* Call the module's defrag callback function and check if more work remains. */
-    if (module->defrag_cb_2(&defrag_module_ctx->module_ctx) != 0)
-        return DEFRAG_NOT_DONE;
-
-    return DEFRAG_DONE;
+    /* Call appropriate version of module's defrag callback:
+     * 1. Version 2 (defrag_cb_2): Supports incremental defrag and returns whether more work is needed
+     * 2. Version 1 (defrag_cb): Legacy version, performs all work in one call.
+     *    Note: V1 doesn't support incremental defragmentation, may block for longer periods. */
+    if (module->defrag_cb_2) {
+        return module->defrag_cb_2(&defrag_module_ctx->module_ctx) ? DEFRAG_NOT_DONE : DEFRAG_DONE;
+    } else if (module->defrag_cb) {
+        module->defrag_cb(&defrag_module_ctx->module_ctx);
+        return DEFRAG_DONE;
+    } else {
+        redis_unreachable();
+    }
 }
 
 static void addDefragStage(defragStageFn stage_fn, void *ctx) {
@@ -1526,7 +1533,7 @@ static void beginDefragCycle(void) {
     dictEntry *de;
     while ((de = dictNext(di)) != NULL) {
         struct RedisModule *module = dictGetVal(de);
-        if (module->defrag_cb_2) {
+        if (module->defrag_cb || module->defrag_cb_2) {
             defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx) + strlen(module->name) + 1);
             ctx->cursor = 0;
             redis_strlcpy(ctx->module_name,module->name,strlen(module->name)+1);
