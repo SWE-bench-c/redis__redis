@@ -928,6 +928,7 @@ typedef int (*RedisModuleConfigSetEnumFunc)(const char *name, int val, void *pri
 typedef int (*RedisModuleConfigApplyFunc)(RedisModuleCtx *ctx, void *privdata, RedisModuleString **err);
 typedef void (*RedisModuleOnUnblocked)(RedisModuleCtx *ctx, RedisModuleCallReply *reply, void *private_data);
 typedef int (*RedisModuleAuthCallback)(RedisModuleCtx *ctx, RedisModuleString *username, RedisModuleString *password, RedisModuleString **err);
+typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *key, size_t keylen);
 
 typedef struct RedisModuleTypeMethods {
     uint64_t version;
@@ -1311,6 +1312,7 @@ REDISMODULE_API void *(*RedisModule_DefragAlloc)(RedisModuleDefragCtx *ctx, void
 REDISMODULE_API void *(*RedisModule_DefragAllocRaw)(RedisModuleDefragCtx *ctx, size_t size) REDISMODULE_ATTR;
 REDISMODULE_API void (*RedisModule_DefragFreeRaw)(RedisModuleDefragCtx *ctx, void *ptr) REDISMODULE_ATTR;
 REDISMODULE_API RedisModuleString *(*RedisModule_DefragRedisModuleString)(RedisModuleDefragCtx *ctx, RedisModuleString *str) REDISMODULE_ATTR;
+REDISMODULE_API RedisModuleDict *(*RedisModule_DefragRedisModuleDict)(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_DefragShouldStop)(RedisModuleDefragCtx *ctx) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_DefragCursorSet)(RedisModuleDefragCtx *ctx, unsigned long cursor) REDISMODULE_ATTR;
 REDISMODULE_API int (*RedisModule_DefragCursorGet)(RedisModuleDefragCtx *ctx, unsigned long *cursor) REDISMODULE_ATTR;
@@ -1684,6 +1686,7 @@ static int RedisModule_Init(RedisModuleCtx *ctx, const char *name, int ver, int 
     REDISMODULE_GET_API(DefragAllocRaw);
     REDISMODULE_GET_API(DefragFreeRaw);
     REDISMODULE_GET_API(DefragRedisModuleString);
+    REDISMODULE_GET_API(DefragRedisModuleDict);
     REDISMODULE_GET_API(DefragShouldStop);
     REDISMODULE_GET_API(DefragCursorSet);
     REDISMODULE_GET_API(DefragCursorGet);

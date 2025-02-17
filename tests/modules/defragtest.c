@@ -21,13 +21,18 @@ unsigned long int datatype_defragged = 0;
 unsigned long int datatype_raw_defragged = 0;
 unsigned long int datatype_resumes = 0;
 unsigned long int datatype_wrong_cursor = 0;
-unsigned long int global_attempts = 0;
+unsigned long int global_strings_attempts = 0;
+unsigned long int global_dicts_attempts = 0;
 unsigned long int defrag_started = 0;
 unsigned long int defrag_ended = 0;
-unsigned long int global_defragged = 0;
+unsigned long int global_strings_defragged = 0;
+unsigned long int global_dicts_defragged = 0;
 
 unsigned long global_strings_len = 0;
 RedisModuleString **global_strings = NULL;
+
+unsigned long global_dicts_len = 0;
+RedisModuleDict **global_dicts = NULL;
 
 static void createGlobalStrings(RedisModuleCtx *ctx, unsigned long count)
 {
@@ -47,16 +52,79 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
     RedisModule_Assert(cursor < global_strings_len);
     for (; cursor < global_strings_len; cursor++) {
         RedisModuleString *new = RedisModule_DefragRedisModuleString(ctx, global_strings[cursor]);
-        global_attempts++;
+        global_strings_attempts++;
         if (new != NULL) {
             global_strings[cursor] = new;
-            global_defragged++;
+            global_strings_defragged++;
         }
 
-        if (cursor % 16 == 0 && RedisModule_DefragShouldStop(ctx)) {
+        if (RedisModule_DefragShouldStop(ctx)) {
             RedisModule_DefragCursorSet(ctx, cursor);
             return 1;
         }
+    }
+    return 0;
+}
+
+static void createGlobalDicts(RedisModuleCtx *ctx, unsigned long count) {
+    global_dicts_len = count;
+    global_dicts = RedisModule_Alloc(sizeof(RedisModuleDict *) * count);
+
+    for (unsigned long i = 0; i < count; i++) {
+        RedisModuleDict *dict = RedisModule_CreateDict(ctx);
+        for (unsigned long j = 0; j < 100; j ++) {
+            RedisModuleString *str = RedisModule_CreateStringFromULongLong(ctx, j);
+            RedisModule_DictSet(dict, str, str);
+        }
+        global_dicts[i] = dict;
+    }
+}
+
+static void *defragGlobalDictValueCB(void *data, unsigned char *key, size_t keylen) {
+    REDISMODULE_NOT_USED(key);
+    REDISMODULE_NOT_USED(keylen);
+    return RedisModule_DefragRedisModuleString(NULL, data);
+}
+
+static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
+    static RedisModuleString *seekTo = NULL;
+    unsigned long cursor = 0;
+
+    RedisModule_DefragCursorGet(ctx, &cursor);
+    RedisModule_Assert(cursor < global_dicts_len);
+    for (; cursor < global_strings_len; cursor++) {
+        RedisModuleString *nextSeekTo = NULL;
+        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, global_dicts[cursor], defragGlobalDictValueCB, seekTo, &nextSeekTo);
+        global_dicts_attempts++;
+        if (new != NULL) {
+            global_dicts[cursor] = new;
+            global_dicts_defragged++;
+        }
+
+        if (seekTo) RedisModule_FreeString(NULL, seekTo);
+        seekTo = nextSeekTo;
+        if (nextSeekTo != NULL) {
+            RedisModule_DefragCursorSet(ctx, cursor);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+typedef enum { DEFRAG_NOT_START, DEFRAG_STRING, DEFRAG_DICT } defrag_module_stage;
+static int defragGlobal(RedisModuleDefragCtx *ctx) {
+    static defrag_module_stage stage = DEFRAG_NOT_START;
+    if (stage == DEFRAG_NOT_START) {
+        stage = DEFRAG_STRING; /* Start a new global defrag. */
+    }
+
+    if (stage == DEFRAG_STRING) {
+        if (defragGlobalStrings(ctx) != 0) return 1;
+        stage = DEFRAG_DICT;
+    }
+    if (stage == DEFRAG_DICT) {
+        if (defragGlobalDicts(ctx) != 0) return 1;
+        stage = DEFRAG_NOT_START;
     }
     return 0;
 }
@@ -80,8 +148,10 @@ static void FragInfo(RedisModuleInfoCtx *ctx, int for_crash_report) {
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_raw_defragged", datatype_raw_defragged);
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_resumes", datatype_resumes);
     RedisModule_InfoAddFieldLongLong(ctx, "datatype_wrong_cursor", datatype_wrong_cursor);
-    RedisModule_InfoAddFieldLongLong(ctx, "global_attempts", global_attempts);
-    RedisModule_InfoAddFieldLongLong(ctx, "global_defragged", global_defragged);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_strings_attempts", global_strings_attempts);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_strings_defragged", global_strings_defragged);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_dicts_attempts", global_dicts_attempts);
+    RedisModule_InfoAddFieldLongLong(ctx, "global_dicts_defragged", global_dicts_defragged);
     RedisModule_InfoAddFieldLongLong(ctx, "defrag_started", defrag_started);
     RedisModule_InfoAddFieldLongLong(ctx, "defrag_ended", defrag_ended);
 }
@@ -109,8 +179,10 @@ static int fragResetStatsCommand(RedisModuleCtx *ctx, RedisModuleString **argv, 
     datatype_raw_defragged = 0;
     datatype_resumes = 0;
     datatype_wrong_cursor = 0;
-    global_attempts = 0;
-    global_defragged = 0;
+    global_strings_attempts = 0;
+    global_strings_defragged = 0;
+    global_dicts_attempts = 0;
+    global_dicts_defragged = 0;
     defrag_started = 0;
     defrag_ended = 0;
 
@@ -248,6 +320,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
     }
 
     createGlobalStrings(ctx, glen);
+    createGlobalDicts(ctx, glen);
 
     RedisModuleTypeMethods tm = {
             .version = REDISMODULE_TYPE_METHOD_VERSION,
@@ -268,7 +341,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
         return REDISMODULE_ERR;
 
     RedisModule_RegisterInfoFunc(ctx, FragInfo);
-    RedisModule_RegisterDefragFunc(ctx, defragGlobalStrings);
+    RedisModule_RegisterDefragFunc(ctx, defragGlobal);
     RedisModule_RegisterDefragCallbacks(ctx, defragStart, defragEnd);
 
     return REDISMODULE_OK;

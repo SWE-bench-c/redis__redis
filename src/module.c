@@ -13918,6 +13918,61 @@ RedisModuleString *RM_DefragRedisModuleString(RedisModuleDefragCtx *ctx, RedisMo
     return activeDefragStringOb(str);
 }
 
+/* Defrag callback for radix tree iterator, called for each node,
+ * used in order to defrag the nodes allocations. */
+int moduleDefragRaxNode(raxNode **noderef) {
+    raxNode *newnode = activeDefragAlloc(*noderef);
+    if (newnode) {
+        *noderef = newnode;
+        return 1;
+    }
+    return 0;
+}
+
+/* Defrag a RedisModuleDict previously allocated by RM_CreateDict. */
+typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *key, size_t keylen);
+RedisModuleDict* RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString *seekTo, RedisModuleString **nextToSeek) {
+    raxIterator ri;
+    if (nextToSeek) *nextToSeek = NULL;
+
+    raxStart(&ri,dict->rax);
+    if (seekTo == NULL) {
+        /* if last seek is NULL, we start new iteration */
+        RedisModuleDict *newdict = NULL;
+        rax* newrax = NULL;
+        if ((newdict = activeDefragAlloc(dict)))
+            dict = newdict;
+        if ((newrax = activeDefragAlloc(dict->rax)))
+            dict->rax = newrax;
+        /* assign the iterator node callback before the seek, so that the
+         * initial nodes that are processed till the first item are covered */
+        ri.node_cb = moduleDefragRaxNode;
+        raxSeek(&ri,"^",NULL,0);
+    } else {
+        /* if cursor is non-zero, we seek to the static 'last' */
+        if (!raxSeek(&ri,">", seekTo->ptr, sdslen(seekTo->ptr))) {
+            raxStop(&ri);
+            return dict;
+        }
+        /* assign the iterator node callback after the seek, so that the
+         * initial nodes that are processed till now aren't covered */
+        ri.node_cb = moduleDefragRaxNode;
+    }
+
+    while (raxNext(&ri)) {
+        void *newdata = valueCB(ri.data, ri.key, ri.key_len);
+        if (newdata)
+            raxSetData(ri.node, ri.data=newdata);
+        server.stat_active_defrag_scanned++;
+        if (RM_DefragShouldStop(ctx)) {
+            *nextToSeek = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
+            raxStop(&ri);
+            return dict;
+        }
+    }
+    raxStop(&ri);
+    return dict;
+}
 
 /* Perform a late defrag of a module datatype key.
  *
@@ -14366,6 +14421,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(DefragAllocRaw);
     REGISTER_API(DefragFreeRaw);
     REGISTER_API(DefragRedisModuleString);
+    REGISTER_API(DefragRedisModuleDict);
     REGISTER_API(DefragShouldStop);
     REGISTER_API(DefragCursorSet);
     REGISTER_API(DefragCursorGet);
