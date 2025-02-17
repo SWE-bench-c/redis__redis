@@ -13929,9 +13929,6 @@ int moduleDefragRaxNode(raxNode **noderef) {
     return 0;
 }
 
-/* Callback called per key in the dict, return value is non-NULL if the input value pointer was moved. */
-typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *key, size_t keylen);
-
 /* Defragment a Redis Module Dictionary by scanning its contents and calling a value
  * callback for each value. Returns a new dict if it was re-allocated (will only
  * be done when seekTo is NULL).

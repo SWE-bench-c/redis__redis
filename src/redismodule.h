@@ -842,6 +842,7 @@ typedef void (*RedisModuleInfoFunc)(RedisModuleInfoCtx *ctx, int for_crash_repor
 typedef int (*RedisModuleDefragFunc)(RedisModuleDefragCtx *ctx);
 typedef void (*RedisModuleDefragEventFunc)(RedisModuleDefragCtx *ctx);
 typedef void (*RedisModuleUserChangedFunc) (uint64_t client_id, void *privdata);
+typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *key, size_t keylen);
 
 /* ------------------------- End of common defines ------------------------ */
 
@@ -928,7 +929,6 @@ typedef int (*RedisModuleConfigSetEnumFunc)(const char *name, int val, void *pri
 typedef int (*RedisModuleConfigApplyFunc)(RedisModuleCtx *ctx, void *privdata, RedisModuleString **err);
 typedef void (*RedisModuleOnUnblocked)(RedisModuleCtx *ctx, RedisModuleCallReply *reply, void *private_data);
 typedef int (*RedisModuleAuthCallback)(RedisModuleCtx *ctx, RedisModuleString *username, RedisModuleString *password, RedisModuleString **err);
-typedef void *(*RedisModuleDefragDictValueCallback)(void *data, unsigned char *key, size_t keylen);
 
 typedef struct RedisModuleTypeMethods {
     uint64_t version;
