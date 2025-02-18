@@ -42,7 +42,7 @@ typedef enum { DEFRAG_NOT_DONE = 0,
  *  - DEFRAG_DONE if the stage is complete
  *  - DEFRAG_NOT_DONE if there is more work to do
  */
-typedef doneStatus (*defragStageFn)(monotime endtime, void *ctx);
+typedef doneStatus (*defragStageFn)(void *ctx, monotime endtime);
 
 /* Function pointer type for freeing context in defragmentation stages. */
 typedef void (*defragStageContextFreeFn)(void *ctx);
@@ -97,7 +97,7 @@ typedef struct {
  *  - DEFRAG_DONE if the pre-continue work is complete
  *  - DEFRAG_NOT_DONE if there is more work to do
  */
-typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *ctx);
+typedef doneStatus (*kvstoreHelperPreContinueFn)(void *ctx, monotime endtime);
 
 typedef struct {
     kvstoreIterState kvstate;
@@ -1017,7 +1017,7 @@ static int defragIsRunning(void) {
 }
 
 /* A kvstoreHelperPreContinueFn */
-static doneStatus defragLaterStep(monotime endtime, void *ctx) {
+static doneStatus defragLaterStep(void *ctx, monotime endtime) {
     defragKeysCtx *defrag_keys_ctx = ctx;
 
     unsigned int iterations = 0;
@@ -1132,7 +1132,7 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
         }
 
         if (precontinue_fn) {
-            if (precontinue_fn(endtime, ctx) == DEFRAG_NOT_DONE) return DEFRAG_NOT_DONE;
+            if (precontinue_fn(ctx, endtime) == DEFRAG_NOT_DONE) return DEFRAG_NOT_DONE;
         }
 
         if (!state->cursor) {
@@ -1154,7 +1154,7 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
     return DEFRAG_NOT_DONE;
 }
 
-static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
+static doneStatus defragStageDbKeys(void *ctx, monotime endtime) {
     defragKeysCtx *defrag_keys_ctx = ctx;
     redisDb *db = &server.db[defrag_keys_ctx->dbid];
     if (db->keys != defrag_keys_ctx->kvstate.kvs) {
@@ -1174,7 +1174,7 @@ static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
         dbKeysScanCallback, defragLaterStep, &defragfns);
 }
 
-static doneStatus defragStageExpiresKvstore(monotime endtime, void *ctx) {
+static doneStatus defragStageExpiresKvstore(void *ctx, monotime endtime) {
     defragKeysCtx *defrag_keys_ctx = ctx;
     redisDb *db = &server.db[defrag_keys_ctx->dbid];
     if (db->keys != defrag_keys_ctx->kvstate.kvs) {
@@ -1191,7 +1191,7 @@ static doneStatus defragStageExpiresKvstore(monotime endtime, void *ctx) {
         scanCallbackCountScanned, NULL, &defragfns);
 }
 
-static doneStatus defragStagePubsubKvstore(monotime endtime, void *ctx) {
+static doneStatus defragStagePubsubKvstore(void *ctx, monotime endtime) {
     static dictDefragFunctions defragfns = {
         .defragAlloc = activeDefragAlloc,
         .defragKey = NULL, /* Handled by defragPubsubScanCallback */
@@ -1202,14 +1202,14 @@ static doneStatus defragStagePubsubKvstore(monotime endtime, void *ctx) {
         defragPubsubScanCallback, NULL, &defragfns);
 }
 
-static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
+static doneStatus defragLuaScripts(void *ctx, monotime endtime) {
     UNUSED(endtime);
     UNUSED(ctx);
     activeDefragSdsDict(evalScriptsDict(), DEFRAG_SDS_DICT_VAL_LUA_SCRIPT);
     return DEFRAG_DONE;
 }
 
-static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
+static doneStatus defragModuleGlobals(void *ctx, monotime endtime) {
     UNUSED(endtime);
     UNUSED(ctx);
     moduleDefragGlobals();
@@ -1418,7 +1418,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
         }
 
         StageDescriptor *stage = listNodeValue(defrag.current_stage);
-        doneStatus status = stage->stage_fn(endtime, stage->ctx);
+        doneStatus status = stage->stage_fn(stage->ctx, endtime);
         if (status == DEFRAG_DONE) {
             listDelNode(defrag.remaining_stages, defrag.current_stage);
             defrag.current_stage = NULL;
