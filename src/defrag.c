@@ -99,7 +99,6 @@ typedef struct {
  */
 typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *ctx);
 
-/* Context for main dictionary keys */
 typedef struct {
     kvstoreIterState kvstate;
     int dbid;
@@ -128,9 +127,6 @@ typedef struct {
     RedisModuleDefragCtx *module_ctx;
     unsigned long cursor;
 } defragModuleCtx;
-
-
-
 
 /* this method was added to jemalloc in order to help us understand which
  * pointers are worthwhile moving and which aren't */
@@ -786,11 +782,9 @@ void defragStream(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     serverAssert(ob->type == OBJ_STREAM && ob->encoding == OBJ_ENCODING_STREAM);
     stream *s = ob->ptr, *news;
-
     /* handle the main struct */
     if ((news = activeDefragAlloc(s)))
         ob->ptr = s = news;
-
     if (raxSize(s->rax) > server.active_defrag_max_scan_fields) {
         rax *newrax = activeDefragAlloc(s->rax);
         if (newrax)
@@ -861,7 +855,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         /* Already handled in activeDefragStringOb. */
     } else if (ob->type == OBJ_LIST) {
         if (ob->encoding == OBJ_ENCODING_QUICKLIST) {
-            defragQuicklist(ctx, de);
+            defragQuicklist(ctx,de);
         } else if (ob->encoding == OBJ_ENCODING_LISTPACK) {
             if ((newzl = activeDefragAlloc(ob->ptr)))
                 ob->ptr = newzl;
@@ -870,7 +864,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         }
     } else if (ob->type == OBJ_SET) {
         if (ob->encoding == OBJ_ENCODING_HT) {
-            defragSet(ctx, de);
+            defragSet(ctx,de);
         } else if (ob->encoding == OBJ_ENCODING_INTSET ||
                    ob->encoding == OBJ_ENCODING_LISTPACK)
         {
@@ -885,7 +879,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
             if ((newzl = activeDefragAlloc(ob->ptr)))
                 ob->ptr = newzl;
         } else if (ob->encoding == OBJ_ENCODING_SKIPLIST) {
-            defragZsetSkiplist(ctx, de);
+            defragZsetSkiplist(ctx,de);
         } else {
             serverPanic("Unknown sorted set encoding");
         }
@@ -900,14 +894,14 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
             if ((newzl = activeDefragAlloc(lpt->lp)))
                 lpt->lp = newzl;
         } else if (ob->encoding == OBJ_ENCODING_HT) {
-            defragHash(ctx, de);
+            defragHash(ctx,de);
         } else {
             serverPanic("Unknown hash encoding");
         }
     } else if (ob->type == OBJ_STREAM) {
-        defragStream(ctx, de);
+        defragStream(ctx,de);
     } else if (ob->type == OBJ_MODULE) {
-        defragModule(ctx, db, de);
+        defragModule(ctx,db, de);
     } else {
         serverPanic("Unknown object type");
     }
@@ -1270,6 +1264,14 @@ static void freeDefragStage(void *ptr) {
     zfree(stage);
 }
 
+static void freeDefragKeysContext(void *ctx) {
+    defragKeysCtx *defrag_keys_ctx = ctx;
+    if (defrag_keys_ctx->defrag_later) {
+        listRelease(defrag_keys_ctx->defrag_later);
+    }
+    zfree(defrag_keys_ctx);
+}
+
 static void addDefragStage(defragStageFn stage_fn, defragStageContextFreeFn ctx_free_fn, void *ctx) {
     StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
     stage->stage_fn = stage_fn;
@@ -1524,7 +1526,7 @@ static void beginDefragCycle(void) {
         defragKeysCtx *defrag_expires_ctx = zcalloc(sizeof(defragKeysCtx));
         defrag_expires_ctx->kvstate = INIT_KVSTORE_STATE(db->expires);
         defrag_expires_ctx->dbid = dbid;
-        addDefragStage(defragStageExpiresKvstore, zfree, defrag_expires_ctx);
+        addDefragStage(defragStageExpiresKvstore, freeDefragKeysContext, defrag_expires_ctx);
     }
 
     /* Add stage for pubsub channels. */
