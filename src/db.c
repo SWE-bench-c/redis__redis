@@ -2048,7 +2048,7 @@ void setExpireWithDictEntry(client *c, redisDb *db, robj *key, long long when, d
 
 /* Return the expire time of the specified key, or -1 if no expire
  * is associated with this key (i.e. the key is non volatile) */
-static inline long getExpireWithSlot(redisDb *db, robj *key, int keySlot) {
+static inline long long getExpireWithSlot(redisDb *db, robj *key, int keySlot) {
     dictEntry *de;
 
     if ((de = dbFindExpiresWithKeySlot(db, key->ptr, keySlot)) == NULL)
