@@ -99,10 +99,18 @@ typedef struct {
  */
 typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *ctx);
 
-/* Context for main dictionary keys */
 typedef struct {
     kvstoreIterState kvstate;
     int dbid;
+
+    /* When scanning a main kvstore, large elements are queued for later handling rather than
+     * causing a large latency spike while processing a hash table bucket. This list is only used
+     * for stage: "defragStageDbKeys". It will only contain values for the current kvstore being
+     * defragged.
+     * Note that this is a list of key names. It's possible that the key may be deleted or modified
+     * before "later" and we will search by key name to find the entry when we defrag the item later. */
+    list *defrag_later;
+    unsigned long defrag_later_cursor;
 } defragKeysCtx;
 static_assert(offsetof(defragKeysCtx, kvstate) == 0, "defragStageKvstoreHelper requires this");
 
@@ -119,16 +127,6 @@ typedef struct {
     RedisModuleDefragCtx *module_ctx;
     unsigned long cursor;
 } defragModuleCtx;
-
-/* When scanning a main kvstore, large elements are queued for later handling rather than
- * causing a large latency spike while processing a hash table bucket. This list is only used
- * for stage: "defragStageDbKeys". It will only contain values for the current kvstore being
- * defragged.
- * Note that this is a list of key names. It's possible that the key may be deleted or modified
- * before "later" and we will search by key name to find the entry when we defrag the item later.
- */
-static list *defrag_later;
-static unsigned long defrag_later_cursor;
 
 /* this method was added to jemalloc in order to help us understand which
  * pointers are worthwhile moving and which aren't */
@@ -467,14 +465,14 @@ void activeDefragQuickListNodes(quicklist *ql) {
 /* when the value has lots of elements, we want to handle it later and not as
  * part of the main dictionary scan. this is needed in order to prevent latency
  * spikes when handling large items */
-void defragLater(dictEntry *kde) {
-    if (!defrag_later) {
-        defrag_later = listCreate();
-        listSetFreeMethod(defrag_later, sdsfreegeneric);
-        defrag_later_cursor = 0;
+void defragLater(defragKeysCtx *ctx, dictEntry *kde) {
+    if (!ctx->defrag_later) {
+        ctx->defrag_later = listCreate();
+        listSetFreeMethod(ctx->defrag_later, sdsfreegeneric);
+        ctx->defrag_later_cursor = 0;
     }
     sds key = sdsdup(dictGetKey(kde));
-    listAddNodeTail(defrag_later, key);
+    listAddNodeTail(ctx->defrag_later, key);
 }
 
 /* returns 0 if no more work needs to be been done, and 1 if time is up and more work is needed. */
@@ -572,19 +570,19 @@ void scanLaterHash(robj *ob, unsigned long *cursor) {
     *cursor = dictScanDefrag(d, *cursor, activeDefragHfieldDictCallback, &defragfns, d);
 }
 
-void defragQuicklist(dictEntry *kde) {
+void defragQuicklist(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     quicklist *ql = ob->ptr, *newql;
     serverAssert(ob->type == OBJ_LIST && ob->encoding == OBJ_ENCODING_QUICKLIST);
     if ((newql = activeDefragAlloc(ql)))
         ob->ptr = ql = newql;
     if (ql->len > server.active_defrag_max_scan_fields)
-        defragLater(kde);
+        defragLater(ctx, kde);
     else
         activeDefragQuickListNodes(ql);
 }
 
-void defragZsetSkiplist(dictEntry *kde) {
+void defragZsetSkiplist(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     zset *zs = (zset*)ob->ptr;
     zset *newzs;
@@ -600,7 +598,7 @@ void defragZsetSkiplist(dictEntry *kde) {
     if ((newheader = activeDefragAlloc(zs->zsl->header)))
         zs->zsl->header = newheader;
     if (dictSize(zs->dict) > server.active_defrag_max_scan_fields)
-        defragLater(kde);
+        defragLater(ctx, kde);
     else {
         dictIterator *di = dictGetIterator(zs->dict);
         while((de = dictNext(di)) != NULL) {
@@ -613,13 +611,13 @@ void defragZsetSkiplist(dictEntry *kde) {
         zs->dict = newdict;
 }
 
-void defragHash(dictEntry *kde) {
+void defragHash(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     dict *d, *newd;
     serverAssert(ob->type == OBJ_HASH && ob->encoding == OBJ_ENCODING_HT);
     d = ob->ptr;
     if (dictSize(d) > server.active_defrag_max_scan_fields)
-        defragLater(kde);
+        defragLater(ctx, kde);
     else
         activeDefragHfieldDict(d);
     /* defrag the dict struct and tables */
@@ -627,13 +625,13 @@ void defragHash(dictEntry *kde) {
         ob->ptr = newd;
 }
 
-void defragSet(dictEntry *kde) {
+void defragSet(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     dict *d, *newd;
     serverAssert(ob->type == OBJ_SET && ob->encoding == OBJ_ENCODING_HT);
     d = ob->ptr;
     if (dictSize(d) > server.active_defrag_max_scan_fields)
-        defragLater(kde);
+        defragLater(ctx, kde);
     else
         activeDefragSdsDict(d, DEFRAG_SDS_DICT_NO_VAL);
     /* defrag the dict struct and tables */
@@ -780,20 +778,18 @@ void* defragStreamConsumerGroup(raxIterator *ri, void *privdata) {
     return NULL;
 }
 
-void defragStream(dictEntry *kde) {
+void defragStream(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     serverAssert(ob->type == OBJ_STREAM && ob->encoding == OBJ_ENCODING_STREAM);
     stream *s = ob->ptr, *news;
-
     /* handle the main struct */
     if ((news = activeDefragAlloc(s)))
         ob->ptr = s = news;
-
     if (raxSize(s->rax) > server.active_defrag_max_scan_fields) {
         rax *newrax = activeDefragAlloc(s->rax);
         if (newrax)
             s->rax = newrax;
-        defragLater(kde);
+        defragLater(ctx, kde);
     } else
         defragRadixTree(&s->rax, 1, NULL, NULL);
 
@@ -804,13 +800,13 @@ void defragStream(dictEntry *kde) {
 /* Defrag a module key. This is either done immediately or scheduled
  * for later. Returns then number of pointers defragged.
  */
-void defragModule(redisDb *db, dictEntry *kde) {
+void defragModule(defragKeysCtx *ctx, redisDb *db, dictEntry *kde) {
     robj *obj = dictGetVal(kde);
     serverAssert(obj->type == OBJ_MODULE);
     robj keyobj;
     initStaticStringObject(keyobj, dictGetKey(kde));
     if (!moduleDefragValue(&keyobj, obj, db->id))
-        defragLater(kde);
+        defragLater(ctx, kde);
 }
 
 /* for each key we scan in the main dict, this function will attempt to defrag
@@ -859,7 +855,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         /* Already handled in activeDefragStringOb. */
     } else if (ob->type == OBJ_LIST) {
         if (ob->encoding == OBJ_ENCODING_QUICKLIST) {
-            defragQuicklist(de);
+            defragQuicklist(ctx,de);
         } else if (ob->encoding == OBJ_ENCODING_LISTPACK) {
             if ((newzl = activeDefragAlloc(ob->ptr)))
                 ob->ptr = newzl;
@@ -868,7 +864,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         }
     } else if (ob->type == OBJ_SET) {
         if (ob->encoding == OBJ_ENCODING_HT) {
-            defragSet(de);
+            defragSet(ctx,de);
         } else if (ob->encoding == OBJ_ENCODING_INTSET ||
                    ob->encoding == OBJ_ENCODING_LISTPACK)
         {
@@ -883,7 +879,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
             if ((newzl = activeDefragAlloc(ob->ptr)))
                 ob->ptr = newzl;
         } else if (ob->encoding == OBJ_ENCODING_SKIPLIST) {
-            defragZsetSkiplist(de);
+            defragZsetSkiplist(ctx,de);
         } else {
             serverPanic("Unknown sorted set encoding");
         }
@@ -898,14 +894,14 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
             if ((newzl = activeDefragAlloc(lpt->lp)))
                 lpt->lp = newzl;
         } else if (ob->encoding == OBJ_ENCODING_HT) {
-            defragHash(de);
+            defragHash(ctx,de);
         } else {
             serverPanic("Unknown hash encoding");
         }
     } else if (ob->type == OBJ_STREAM) {
-        defragStream(de);
+        defragStream(ctx,de);
     } else if (ob->type == OBJ_MODULE) {
-        defragModule(db, de);
+        defragModule(ctx,db, de);
     } else {
         serverPanic("Unknown object type");
     }
@@ -1025,20 +1021,20 @@ static int defragIsRunning(void) {
 }
 
 /* A kvstoreHelperPreContinueFn */
-static doneStatus defragLaterStep(monotime endtime, void *privdata) {
-    defragKeysCtx *ctx = privdata;
+static doneStatus defragLaterStep(monotime endtime, void *ctx) {
+    defragKeysCtx *defrag_keys_ctx = ctx;
 
     unsigned int iterations = 0;
     unsigned long long prev_defragged = server.stat_active_defrag_hits;
     unsigned long long prev_scanned = server.stat_active_defrag_scanned;
 
-    while (defrag_later && listLength(defrag_later) > 0) {
-        listNode *head = listFirst(defrag_later);
+    while (defrag_keys_ctx->defrag_later && listLength(defrag_keys_ctx->defrag_later) > 0) {
+        listNode *head = listFirst(defrag_keys_ctx->defrag_later);
         sds key = head->value;
-        dictEntry *de = kvstoreDictFind(ctx->kvstate.kvs, ctx->kvstate.slot, key);
+        dictEntry *de = kvstoreDictFind(defrag_keys_ctx->kvstate.kvs, defrag_keys_ctx->kvstate.slot, key);
 
         long long key_defragged = server.stat_active_defrag_hits;
-        int timeout = (defragLaterItem(de, &defrag_later_cursor, endtime, ctx->dbid) == 1);
+        int timeout = (defragLaterItem(de, &defrag_keys_ctx->defrag_later_cursor, endtime, defrag_keys_ctx->dbid) == 1);
         if (key_defragged != server.stat_active_defrag_hits) {
             server.stat_active_defrag_key_hits++;
         } else {
@@ -1047,9 +1043,9 @@ static doneStatus defragLaterStep(monotime endtime, void *privdata) {
 
         if (timeout) break;
 
-        if (defrag_later_cursor == 0) {
+        if (defrag_keys_ctx->defrag_later_cursor == 0) {
             /* the item is finished, move on */
-            listDelNode(defrag_later, head);
+            listDelNode(defrag_keys_ctx->defrag_later, head);
         }
 
         if (++iterations > 16 || server.stat_active_defrag_hits - prev_defragged > 512 ||
@@ -1061,7 +1057,7 @@ static doneStatus defragLaterStep(monotime endtime, void *privdata) {
         }
     }
 
-    return (!defrag_later || listLength(defrag_later) == 0) ? DEFRAG_DONE : DEFRAG_NOT_DONE;
+    return (!defrag_keys_ctx->defrag_later || listLength(defrag_keys_ctx->defrag_later) == 0) ? DEFRAG_DONE : DEFRAG_NOT_DONE;
 }
 
 #define INTERPOLATE(x, x1, x2, y1, y2) ( (y1) + ((x)-(x1)) * ((y2)-(y1)) / ((x2)-(x1)) )
@@ -1260,6 +1256,14 @@ static void freeDefragStage(void *ptr) {
     zfree(stage);
 }
 
+static void freeDefragKeysContext(void *ctx) {
+    defragKeysCtx *defrag_keys_ctx = ctx;
+    if (defrag_keys_ctx->defrag_later) {
+        listRelease(defrag_keys_ctx->defrag_later);
+    }
+    zfree(defrag_keys_ctx);
+}
+
 static void addDefragStage(defragStageFn stage_fn, defragStageContextFreeFn ctx_free_fn, void *ctx) {
     StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
     stage->stage_fn = stage_fn;
@@ -1295,7 +1299,6 @@ static void endDefragCycle(int normal_termination) {
         /* For normal termination, we expect... */
         serverAssert(!defrag.current_stage);
         serverAssert(listLength(defrag.remaining_stages) == 0);
-        serverAssert(!defrag_later || listLength(defrag_later) == 0);
     } else {
         /* Defrag is being terminated abnormally */
         aeDeleteTimeEvent(server.el, defrag.timeproc_id);
@@ -1309,12 +1312,6 @@ static void endDefragCycle(int normal_termination) {
 
     listRelease(defrag.remaining_stages);
     defrag.remaining_stages = NULL;
-
-    if (defrag_later) {
-        listRelease(defrag_later);
-        defrag_later = NULL;
-    }
-    defrag_later_cursor = 0;
 
     size_t frag_bytes;
     float frag_pct = getAllocatorFragmentation(&frag_bytes);
@@ -1512,16 +1509,16 @@ static void beginDefragCycle(void) {
         redisDb *db = &server.db[dbid];
 
         /* Add stage for keys. */
-        defragKeysCtx *defrag_keys_ctx = zmalloc(sizeof(defragKeysCtx));
+        defragKeysCtx *defrag_keys_ctx = zcalloc(sizeof(defragKeysCtx));
         defrag_keys_ctx->kvstate = INIT_KVSTORE_STATE(db->keys);
         defrag_keys_ctx->dbid = dbid;
-        addDefragStage(defragStageDbKeys, zfree, defrag_keys_ctx);
+        addDefragStage(defragStageDbKeys, freeDefragKeysContext, defrag_keys_ctx);
 
         /* Add stage for expires. */
-        defragKeysCtx *defrag_expires_ctx = zmalloc(sizeof(defragKeysCtx));
+        defragKeysCtx *defrag_expires_ctx = zcalloc(sizeof(defragKeysCtx));
         defrag_expires_ctx->kvstate = INIT_KVSTORE_STATE(db->expires);
         defrag_expires_ctx->dbid = dbid;
-        addDefragStage(defragStageExpiresKvstore, zfree, defrag_expires_ctx);
+        addDefragStage(defragStageExpiresKvstore, freeDefragKeysContext, defrag_expires_ctx);
     }
 
     /* Add stage for pubsub channels. */
