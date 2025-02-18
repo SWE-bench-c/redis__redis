@@ -13939,11 +13939,16 @@ int moduleDefragRaxNode(raxNode **noderef) {
 }
 
 /* Defragment a Redis Module Dictionary by scanning its contents and calling a value
- * callback for each value. Returns a new dict if it was re-allocated (will only
- * be done when seekTo is NULL).
+ * callback for each value.
  *
- * The function can work incrementally by accepting a seek position to continue from, and
- * returning the next position to seek to.
+ * The callback gets the current value in the dict, and should return non-NULL with a new pointer,
+ * if the value was re-allocated to a different address. The callback also gets the key name just as a reference.
+ *
+ * The API can work incrementally by accepting a seek position to continue from, and
+ * returning the next position to seek to on the next call (or return NULL when the iteration is completed).
+ *
+ * This API returns a new dict if it was re-allocated to a new address (will only
+ * be attempted when *seekTo is NULL on entry).
  */
 RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModuleDict *dict, RedisModuleDefragDictValueCallback valueCB, RedisModuleString **seekTo) {
     RedisModuleDict *newdict = NULL;
