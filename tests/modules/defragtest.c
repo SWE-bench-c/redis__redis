@@ -110,7 +110,6 @@ static void createFragGlobalDicts(RedisModuleCtx *ctx) {
         * 1. For odd indices (i % 2 == 1): Remove the entire dictionary.
          * 2. For even indices: Keep the dictionary but remove half of its items. */
         if (i % 2 == 1) {
-            /* */
             while ((key = RedisModule_DictNextC(iter, &keylen, (void**)&val))) {
                 RedisModule_FreeString(ctx, val);
             }
