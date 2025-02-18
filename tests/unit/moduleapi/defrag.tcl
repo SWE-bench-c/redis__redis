@@ -43,8 +43,14 @@ start_server {tags {"modules"} overrides {{save ""}}} {
         test {Module defrag: global defrag works} {
             r flushdb
             r frag.resetstats
+            r frag.create_frag_global
 
-            after 2000
+            wait_for_condition 100 50 {
+                [getInfoProperty [r info defragtest_stats] defragtest_global_strings_defragged] > 0 &&
+                [getInfoProperty [r info defragtest_stats] defragtest_global_dicts_defragged] > 0
+            } else {
+                fail "Global defrag did not work"
+            }
             set info [r info defragtest_stats]
             assert {[getInfoProperty $info defragtest_global_strings_attempts] > 0}
             assert {[getInfoProperty $info defragtest_global_strings_pauses] > 0}

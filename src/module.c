@@ -13954,7 +13954,6 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
     RedisModuleDict *newdict = NULL;
     raxIterator ri;
 
-    raxStart(&ri,dict->rax);
     if (*seekTo == NULL) {
         /* if last seek is NULL, we start new iteration */
         rax* newrax = NULL;
@@ -13962,6 +13961,10 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
             dict = newdict;
         if ((newrax = activeDefragAlloc(dict->rax)))
             dict->rax = newrax;
+    }
+
+    raxStart(&ri,dict->rax);
+    if (*seekTo == NULL) {
         /* assign the iterator node callback before the seek, so that the
          * initial nodes that are processed till the first item are covered */
         ri.node_cb = moduleDefragRaxNode;

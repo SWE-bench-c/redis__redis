@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define UNUSED(V) ((void) V)
+
 static RedisModuleType *FragType;
 
 struct FragObject {
@@ -53,7 +55,9 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
 
     RedisModule_Assert(cursor < global_strings_len);
     for (; cursor < global_strings_len; cursor++) {
-        RedisModuleString *new = RedisModule_DefragRedisModuleString(ctx, global_strings[cursor]);
+        RedisModuleString *str = global_strings[cursor];
+        if (!str) continue;
+        RedisModuleString *new = RedisModule_DefragRedisModuleString(ctx, str);
         global_strings_attempts++;
         if (new != NULL) {
             global_strings[cursor] = new;
@@ -67,6 +71,15 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
         }
     }
     return 0;
+}
+
+static void createFragGlobalStrings(RedisModuleCtx *ctx) {
+    for (unsigned long i = 0; i < global_strings_len; i++) {
+        if (i % 2 == 1) {
+            RedisModule_FreeString(ctx, global_strings[i]);
+            global_strings[i] = NULL;
+        }
+    }
 }
 
 static void createGlobalDicts(RedisModuleCtx *ctx, unsigned long count) {
@@ -83,9 +96,45 @@ static void createGlobalDicts(RedisModuleCtx *ctx, unsigned long count) {
     }
 }
 
+static void createFragGlobalDicts(RedisModuleCtx *ctx) {
+    char *key;
+    size_t keylen;
+    RedisModuleString *val;
+
+    for (unsigned long i = 0; i < global_dicts_len; i++) {
+        RedisModuleDict *dict = global_dicts[i];
+        if (!dict) continue;
+
+        RedisModuleDictIter *iter = RedisModule_DictIteratorStartC(dict, "^", NULL, 0);
+        /* Handle dictionaries differently based on their index in global_dicts array:
+        * 1. For odd indices (i % 2 == 1): Remove the entire dictionary.
+         * 2. For even indices: Keep the dictionary but remove half of its items. */
+        if (i % 2 == 1) {
+            /* */
+            while ((key = RedisModule_DictNextC(iter, &keylen, (void**)&val))) {
+                RedisModule_FreeString(ctx, val);
+            }
+            RedisModule_DictIteratorStop(iter);
+            RedisModule_FreeDict(ctx, dict);
+            global_dicts[i] = NULL;
+        } else {
+            int key_index = 0;
+            RedisModuleDictIter *iter = RedisModule_DictIteratorStartC(dict, "^", NULL, 0);
+            while ((key = RedisModule_DictNextC(iter, &keylen, (void**)&val))) {
+                if (key_index++ % 2 == 1) {
+                    RedisModule_FreeString(ctx, val);
+                    RedisModule_DictReplaceC(dict, key, keylen, NULL);
+                }
+            }
+        }
+        RedisModule_DictIteratorStop(iter);
+    }
+}
+
 static void *defragGlobalDictValueCB(void *data, unsigned char *key, size_t keylen) {
     REDISMODULE_NOT_USED(key);
     REDISMODULE_NOT_USED(keylen);
+    if (!data) return NULL;
     return RedisModule_DefragRedisModuleString(NULL, data);
 }
 
@@ -105,7 +154,9 @@ static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
 
     RedisModule_Assert(dict_index < global_dicts_len);
     for (; dict_index < global_strings_len; dict_index++) {
-        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, global_dicts[dict_index], defragGlobalDictValueCB, &seekTo);
+        RedisModuleDict *dict = global_dicts[dict_index];
+        if (!dict) continue;
+        RedisModuleDict *new = RedisModule_DefragRedisModuleDict(ctx, dict, defragGlobalDictValueCB, &seekTo);
         global_dicts_attempts++;
         if (new != NULL) {
             global_dicts[dict_index] = new;
@@ -245,6 +296,18 @@ static int fragCreateCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int 
     return REDISMODULE_OK;
 }
 
+/* FRAG.create_frag_global */
+static int fragCreateGlobalCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    UNUSED(argv);
+    if (argc != 1)
+        return RedisModule_WrongArity(ctx);
+
+    createFragGlobalStrings(ctx);
+    createFragGlobalDicts(ctx);
+    RedisModule_ReplyWithSimpleString(ctx, "OK");
+    return REDISMODULE_OK;
+}
+
 void FragFree(void *value) {
     struct FragObject *o = value;
 
@@ -354,6 +417,10 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
     if (RedisModule_CreateCommand(ctx, "frag.create",
                                   fragCreateCommand, "write deny-oom", 1, 1, 1) == REDISMODULE_ERR)
         return REDISMODULE_ERR;
+
+    if (RedisModule_CreateCommand(ctx, "frag.create_frag_global",
+        fragCreateGlobalCommand, "write deny-oom", 1, 1, 1) == REDISMODULE_ERR)
+    return REDISMODULE_ERR;
 
     if (RedisModule_CreateCommand(ctx, "frag.resetstats",
                                   fragResetStatsCommand, "write deny-oom", 1, 1, 1) == REDISMODULE_ERR)
