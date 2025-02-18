@@ -44,8 +44,11 @@ typedef enum { DEFRAG_NOT_DONE = 0,
  */
 typedef doneStatus (*defragStageFn)(monotime endtime, void *ctx);
 
+/* Function pointer type for freeing context in defragmentation stages. */
+typedef void (*defragStageContextFreeFn)(void *ctx);
 typedef struct {
     defragStageFn stage_fn; /* The function to be invoked for the stage */
+    defragStageContextFreeFn ctx_free_fn; /* Function to free the context */
     void *ctx; /* Context, unique to the stage function */
 } StageDescriptor;
 
@@ -1215,16 +1218,18 @@ static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
     return DEFRAG_DONE;
 }
 
-static void addDefragStage(defragStageFn stage_fn, void *ctx) {
+static void addDefragStage(defragStageFn stage_fn, defragStageContextFreeFn ctx_free_fn, void *ctx) {
     StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
     stage->stage_fn = stage_fn;
+    stage->ctx_free_fn = ctx_free_fn;
     stage->ctx = ctx;
     listAddNodeTail(defrag.remaining_stages, stage);
 }
 
 static void freeDefragContext(void *ptr) {
     StageDescriptor *stage = ptr;
-    zfree(stage->ctx);
+    if (stage->ctx_free_fn)
+        stage->ctx_free_fn(stage->ctx);
     zfree(stage);
 }
 
@@ -1475,29 +1480,29 @@ static void beginDefragCycle(void) {
         defragKeysCtx *defrag_keys_ctx = zmalloc(sizeof(defragKeysCtx));
         defrag_keys_ctx->kvstate = INIT_KVSTORE_STATE(db->keys);
         defrag_keys_ctx->dbid = dbid;
-        addDefragStage(defragStageDbKeys, defrag_keys_ctx);
+        addDefragStage(defragStageDbKeys, zfree, defrag_keys_ctx);
 
         /* Add stage for expires. */
         defragKeysCtx *defrag_expires_ctx = zmalloc(sizeof(defragKeysCtx));
         defrag_expires_ctx->kvstate = INIT_KVSTORE_STATE(db->expires);
         defrag_expires_ctx->dbid = dbid;
-        addDefragStage(defragStageExpiresKvstore, defrag_expires_ctx);
+        addDefragStage(defragStageExpiresKvstore, zfree, defrag_expires_ctx);
     }
 
     /* Add stage for pubsub channels. */
     defragPubSubCtx *defrag_pubsub_ctx = zmalloc(sizeof(defragPubSubCtx));
     defrag_pubsub_ctx->kvstate = INIT_KVSTORE_STATE(server.pubsub_channels);
     defrag_pubsub_ctx->getPubSubChannels = getClientPubSubChannels;
-    addDefragStage(defragStagePubsubKvstore, defrag_pubsub_ctx);
+    addDefragStage(defragStagePubsubKvstore, zfree, defrag_pubsub_ctx);
 
     /* Add stage for pubsubshard channels. */
     defragPubSubCtx *defrag_pubsubshard_ctx = zmalloc(sizeof(defragPubSubCtx));
     defrag_pubsubshard_ctx->kvstate = INIT_KVSTORE_STATE(server.pubsubshard_channels);
     defrag_pubsubshard_ctx->getPubSubChannels = getClientPubSubShardChannels;
-    addDefragStage(defragStagePubsubKvstore, defrag_pubsubshard_ctx);
+    addDefragStage(defragStagePubsubKvstore, zfree, defrag_pubsubshard_ctx);
 
-    addDefragStage(defragLuaScripts, NULL);
-    addDefragStage(defragModuleGlobals, NULL);
+    addDefragStage(defragLuaScripts, NULL, NULL);
+    addDefragStage(defragModuleGlobals, NULL, NULL);
 
     defrag.current_stage = NULL;
     defrag.start_cycle = getMonotonicUs();
