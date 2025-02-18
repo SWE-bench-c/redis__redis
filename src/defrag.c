@@ -776,9 +776,11 @@ void defragStream(defragKeysCtx *ctx, dictEntry *kde) {
     robj *ob = dictGetVal(kde);
     serverAssert(ob->type == OBJ_STREAM && ob->encoding == OBJ_ENCODING_STREAM);
     stream *s = ob->ptr, *news;
+
     /* handle the main struct */
     if ((news = activeDefragAlloc(s)))
         ob->ptr = s = news;
+
     if (raxSize(s->rax) > server.active_defrag_max_scan_fields) {
         rax *newrax = activeDefragAlloc(s->rax);
         if (newrax)
@@ -849,7 +851,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         /* Already handled in activeDefragStringOb. */
     } else if (ob->type == OBJ_LIST) {
         if (ob->encoding == OBJ_ENCODING_QUICKLIST) {
-            defragQuicklist(ctx,de);
+            defragQuicklist(ctx, de);
         } else if (ob->encoding == OBJ_ENCODING_LISTPACK) {
             if ((newzl = activeDefragAlloc(ob->ptr)))
                 ob->ptr = newzl;
@@ -873,7 +875,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
             if ((newzl = activeDefragAlloc(ob->ptr)))
                 ob->ptr = newzl;
         } else if (ob->encoding == OBJ_ENCODING_SKIPLIST) {
-            defragZsetSkiplist(ctx,de);
+            defragZsetSkiplist(ctx, de);
         } else {
             serverPanic("Unknown sorted set encoding");
         }
@@ -888,12 +890,12 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
             if ((newzl = activeDefragAlloc(lpt->lp)))
                 lpt->lp = newzl;
         } else if (ob->encoding == OBJ_ENCODING_HT) {
-            defragHash(ctx,de);
+            defragHash(ctx, de);
         } else {
             serverPanic("Unknown hash encoding");
         }
     } else if (ob->type == OBJ_STREAM) {
-        defragStream(ctx,de);
+        defragStream(ctx, de);
     } else if (ob->type == OBJ_MODULE) {
         defragModule(ctx,db, de);
     } else {
