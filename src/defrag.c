@@ -1264,14 +1264,6 @@ static void freeDefragStage(void *ptr) {
     zfree(stage);
 }
 
-static void freeDefragKeysContext(void *ctx) {
-    defragKeysCtx *defrag_keys_ctx = ctx;
-    if (defrag_keys_ctx->defrag_later) {
-        listRelease(defrag_keys_ctx->defrag_later);
-    }
-    zfree(defrag_keys_ctx);
-}
-
 static void addDefragStage(defragStageFn stage_fn, defragStageContextFreeFn ctx_free_fn, void *ctx) {
     StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
     stage->stage_fn = stage_fn;
