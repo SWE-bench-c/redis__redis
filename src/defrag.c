@@ -44,8 +44,11 @@ typedef enum { DEFRAG_NOT_DONE = 0,
  */
 typedef doneStatus (*defragStageFn)(monotime endtime, void *ctx);
 
+/* Function pointer type for freeing context in defragmentation stages. */
+typedef void (*defragStageContextFreeFn)(void *ctx);
 typedef struct {
     defragStageFn stage_fn; /* The function to be invoked for the stage */
+    defragStageContextFreeFn ctx_free_fn; /* Function to free the context */
     void *ctx; /* Context, unique to the stage function */
 } StageDescriptor;
 
@@ -112,9 +115,9 @@ typedef struct {
 static_assert(offsetof(defragPubSubCtx, kvstate) == 0, "defragStageKvstoreHelper requires this");
 
 typedef struct {
-    RedisModuleDefragCtx module_ctx;
+    sds module_name;
+    RedisModuleDefragCtx *module_ctx;
     unsigned long cursor;
-    char module_name[];
 } defragModuleCtx;
 
 /* When scanning a main kvstore, large elements are queued for later handling rather than
@@ -1219,43 +1222,50 @@ static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
 static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
     defragModuleCtx *defrag_module_ctx = ctx;
 
-    sds module_name = sdsnew(defrag_module_ctx->module_name);
-    RedisModule *module = moduleGetHandleByName(module_name);
-    sdsfree(module_name);
+    RedisModule *module = moduleGetHandleByName(defrag_module_ctx->module_name);
     if (!module) {
         /* Module has been unloaded, nothing to defrag. */
         return DEFRAG_DONE;
     }
 
     /* Set up context for the module's defrag callback. */
-    defrag_module_ctx->module_ctx.endtime = endtime;
-    defrag_module_ctx->module_ctx.cursor = &defrag_module_ctx->cursor;
+    defrag_module_ctx->module_ctx->endtime = endtime;
+    defrag_module_ctx->module_ctx->cursor = &defrag_module_ctx->cursor;
 
     /* Call appropriate version of module's defrag callback:
      * 1. Version 2 (defrag_cb_2): Supports incremental defrag and returns whether more work is needed
      * 2. Version 1 (defrag_cb): Legacy version, performs all work in one call.
      *    Note: V1 doesn't support incremental defragmentation, may block for longer periods. */
     if (module->defrag_cb_2) {
-        return module->defrag_cb_2(&defrag_module_ctx->module_ctx) ? DEFRAG_NOT_DONE : DEFRAG_DONE;
+        return module->defrag_cb_2(defrag_module_ctx->module_ctx) ? DEFRAG_NOT_DONE : DEFRAG_DONE;
     } else if (module->defrag_cb) {
-        module->defrag_cb(&defrag_module_ctx->module_ctx);
+        module->defrag_cb(defrag_module_ctx->module_ctx);
         return DEFRAG_DONE;
     } else {
         redis_unreachable();
     }
 }
 
-static void addDefragStage(defragStageFn stage_fn, void *ctx) {
-    StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
-    stage->stage_fn = stage_fn;
-    stage->ctx = ctx;
-    listAddNodeTail(defrag.remaining_stages, stage);
+static void freeDefragModelContext(void *ctx) {
+    defragModuleCtx *defrag_model_ctx = ctx;
+    sdsfree(defrag_model_ctx->module_name);
+    zfree(defrag_model_ctx->module_ctx);
+    zfree(defrag_model_ctx);
 }
 
-static void freeDefragContext(void *ptr) {
+static void freeDefragStage(void *ptr) {
     StageDescriptor *stage = ptr;
-    zfree(stage->ctx);
+    if (stage->ctx_free_fn)
+        stage->ctx_free_fn(stage->ctx);
     zfree(stage);
+}
+
+static void addDefragStage(defragStageFn stage_fn, defragStageContextFreeFn ctx_free_fn, void *ctx) {
+    StageDescriptor *stage = zmalloc(sizeof(StageDescriptor));
+    stage->stage_fn = stage_fn;
+    stage->ctx_free_fn = ctx_free_fn;
+    stage->ctx = ctx;
+    listAddNodeTail(defrag.remaining_stages, stage);
 }
 
 /* Updates the defrag decay rate based on the observed effectiveness of the defrag process.
@@ -1496,7 +1506,7 @@ static void beginDefragCycle(void) {
 
     serverAssert(defrag.remaining_stages == NULL);
     defrag.remaining_stages = listCreate();
-    listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
+    listSetFreeMethod(defrag.remaining_stages, freeDefragStage);
 
     for (int dbid = 0; dbid < server.dbnum; dbid++) {
         redisDb *db = &server.db[dbid];
@@ -1505,28 +1515,28 @@ static void beginDefragCycle(void) {
         defragKeysCtx *defrag_keys_ctx = zmalloc(sizeof(defragKeysCtx));
         defrag_keys_ctx->kvstate = INIT_KVSTORE_STATE(db->keys);
         defrag_keys_ctx->dbid = dbid;
-        addDefragStage(defragStageDbKeys, defrag_keys_ctx);
+        addDefragStage(defragStageDbKeys, zfree, defrag_keys_ctx);
 
         /* Add stage for expires. */
         defragKeysCtx *defrag_expires_ctx = zmalloc(sizeof(defragKeysCtx));
         defrag_expires_ctx->kvstate = INIT_KVSTORE_STATE(db->expires);
         defrag_expires_ctx->dbid = dbid;
-        addDefragStage(defragStageExpiresKvstore, defrag_expires_ctx);
+        addDefragStage(defragStageExpiresKvstore, zfree, defrag_expires_ctx);
     }
 
     /* Add stage for pubsub channels. */
     defragPubSubCtx *defrag_pubsub_ctx = zmalloc(sizeof(defragPubSubCtx));
     defrag_pubsub_ctx->kvstate = INIT_KVSTORE_STATE(server.pubsub_channels);
     defrag_pubsub_ctx->getPubSubChannels = getClientPubSubChannels;
-    addDefragStage(defragStagePubsubKvstore, defrag_pubsub_ctx);
+    addDefragStage(defragStagePubsubKvstore, zfree, defrag_pubsub_ctx);
 
     /* Add stage for pubsubshard channels. */
     defragPubSubCtx *defrag_pubsubshard_ctx = zmalloc(sizeof(defragPubSubCtx));
     defrag_pubsubshard_ctx->kvstate = INIT_KVSTORE_STATE(server.pubsubshard_channels);
     defrag_pubsubshard_ctx->getPubSubChannels = getClientPubSubShardChannels;
-    addDefragStage(defragStagePubsubKvstore, defrag_pubsubshard_ctx);
+    addDefragStage(defragStagePubsubKvstore, zfree, defrag_pubsubshard_ctx);
 
-    addDefragStage(defragLuaScripts, NULL);
+    addDefragStage(defragLuaScripts, NULL, NULL);
 
     /* Add stages for modules. */
     dictIterator *di = dictGetIterator(modules);
@@ -1534,10 +1544,11 @@ static void beginDefragCycle(void) {
     while ((de = dictNext(di)) != NULL) {
         struct RedisModule *module = dictGetVal(de);
         if (module->defrag_cb || module->defrag_cb_2) {
-            defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx) + strlen(module->name) + 1);
+            defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx));
             ctx->cursor = 0;
-            redis_strlcpy(ctx->module_name,module->name,strlen(module->name)+1);
-            addDefragStage(defragModuleGlobals, ctx);
+            ctx->module_name = sdsnew(module->name);
+            ctx->module_ctx = zcalloc(sizeof(defragModuleCtx));
+            addDefragStage(defragModuleGlobals, freeDefragModelContext, ctx);
         }
     }
     dictReleaseIterator(di);
