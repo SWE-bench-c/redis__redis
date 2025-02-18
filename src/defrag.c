@@ -1546,7 +1546,7 @@ static void beginDefragCycle(void) {
             defragModuleCtx *ctx = zmalloc(sizeof(defragModuleCtx));
             ctx->cursor = 0;
             ctx->module_name = sdsnew(module->name);
-            ctx->module_ctx = zcalloc(sizeof(defragModuleCtx));
+            ctx->module_ctx = zcalloc(sizeof(RedisModuleDefragCtx));
             addDefragStage(defragModuleGlobals, freeDefragModelContext, ctx);
         }
     }
