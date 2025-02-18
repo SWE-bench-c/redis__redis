@@ -75,7 +75,7 @@ static void createGlobalDicts(RedisModuleCtx *ctx, unsigned long count) {
 
     for (unsigned long i = 0; i < count; i++) {
         RedisModuleDict *dict = RedisModule_CreateDict(ctx);
-        for (unsigned long j = 0; j < 100; j ++) {
+        for (unsigned long j = 0; j < 10; j ++) {
             RedisModuleString *str = RedisModule_CreateStringFromULongLong(ctx, j);
             RedisModule_DictSet(dict, str, str);
         }
