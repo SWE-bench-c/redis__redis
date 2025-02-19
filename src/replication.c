@@ -1385,7 +1385,7 @@ void replconfCommand(client *c) {
             long rdb_channel = 0;
             if (getRangeLongFromObjectOrReply(c, c->argv[j + 1], 0, 1, &rdb_channel, NULL) != C_OK)
                 return;
-            if (rdb_channel == 1) {
+            if (rdb_channel == 1 && server.repl_rdb_channel && server.repl_diskless_sync) {
                 c->flags |= CLIENT_REPL_RDB_CHANNEL;
                 c->slave_req |= SLAVE_REQ_RDB_CHANNEL;
             } else {
