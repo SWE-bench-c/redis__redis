@@ -860,7 +860,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         }
     } else if (ob->type == OBJ_SET) {
         if (ob->encoding == OBJ_ENCODING_HT) {
-            defragSet(ctx,de);
+            defragSet(ctx, de);
         } else if (ob->encoding == OBJ_ENCODING_INTSET ||
                    ob->encoding == OBJ_ENCODING_LISTPACK)
         {
