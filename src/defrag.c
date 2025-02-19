@@ -1338,14 +1338,8 @@ static int computeDefragCycleUs(void) {
 
         /* Also adjust for any accumulated overage. */
         dutyCycleUs -= defrag.timeproc_overage_us;
+        if (dutyCycleUs < 0) dutyCycleUs = 0;
         defrag.timeproc_overage_us = 0;
-
-        if (dutyCycleUs < server.active_defrag_cycle_us) {
-            /* We never reduce our cycle time, that would increase overhead. Instead, we track this
-             * as part of the overage, and increase wait time between cycles. */
-            defrag.timeproc_overage_us = server.active_defrag_cycle_us - dutyCycleUs;
-            dutyCycleUs = server.active_defrag_cycle_us;
-        }
     }
     return dutyCycleUs;
 }
@@ -1354,8 +1348,7 @@ static int computeDefragCycleUs(void) {
  * computeDefragCycleUs computation. */
 static int computeDelayMs(monotime intendedEndtime) {
     defrag.timeproc_end_time = getMonotonicUs();
-    long overage = defrag.timeproc_end_time - intendedEndtime;
-    defrag.timeproc_overage_us += overage; /* track over/under desired CPU */
+    defrag.timeproc_overage_us = defrag.timeproc_end_time - intendedEndtime;
     /* Allow negative overage (underage) to count against existing overage, but don't allow
      * underage (from short stages) to be accumulated. */
     if (defrag.timeproc_overage_us < 0) defrag.timeproc_overage_us = 0;
