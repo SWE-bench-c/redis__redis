@@ -23,7 +23,7 @@
 
 #ifdef HAVE_DEFRAG
 
-#define DEFRAG_CYCLE_US 500 /* The time spent (in microseconds) of the periodic active defrag process */
+#define DEFRAG_CYCLE_US 500 /* Standard duration of defrag cycle (in microseconds) */
 
 typedef enum { DEFRAG_NOT_DONE = 0,
                DEFRAG_DONE = 1 } doneStatus;
@@ -1261,7 +1261,7 @@ static void freeDefragModelContext(void *ctx) {
     zfree(defrag_model_ctx);
 }
 
-static void freeDefragStage(void *ptr) {
+static void freeDefragContext(void *ptr) {
     StageDescriptor *stage = ptr;
     if (stage->ctx_free_fn)
         stage->ctx_free_fn(stage->ctx);
@@ -1512,7 +1512,7 @@ static void beginDefragCycle(void) {
 
     serverAssert(defrag.remaining_stages == NULL);
     defrag.remaining_stages = listCreate();
-    listSetFreeMethod(defrag.remaining_stages, freeDefragStage);
+    listSetFreeMethod(defrag.remaining_stages, freeDefragContext);
 
     for (int dbid = 0; dbid < server.dbnum; dbid++) {
         redisDb *db = &server.db[dbid];
