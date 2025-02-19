@@ -23,6 +23,8 @@
 
 #ifdef HAVE_DEFRAG
 
+#define DEFRAG_CYCLE_US 500 /* The time spent (in microseconds) of the periodic active defrag process */
+
 typedef enum { DEFRAG_NOT_DONE = 0,
                DEFRAG_DONE = 1 } doneStatus;
 
@@ -1318,7 +1320,7 @@ static int computeDefragCycleUs(void) {
     if (defrag.timeproc_end_time == 0) {
         /* Either the first call to the timeProc, or we were paused for some reason. */
         defrag.timeproc_overage_us = 0;
-        dutyCycleUs = server.active_defrag_cycle_us;
+        dutyCycleUs = DEFRAG_CYCLE_US;
     } else {
         long waitedUs = getMonotonicUs() - defrag.timeproc_end_time;
         /* Given the elapsed wait time between calls, compute the necessary duty time needed to
@@ -1338,8 +1340,19 @@ static int computeDefragCycleUs(void) {
 
         /* Also adjust for any accumulated overage. */
         dutyCycleUs -= defrag.timeproc_overage_us;
-        if (dutyCycleUs < 0) dutyCycleUs = 0;
         defrag.timeproc_overage_us = 0;
+
+        if (dutyCycleUs < DEFRAG_CYCLE_US) {
+            /* We never reduce our cycle time, that would increase overhead. Instead, we track this
+             * as part of the overage, and increase wait time between cycles. */
+            defrag.timeproc_overage_us = DEFRAG_CYCLE_US - dutyCycleUs;
+            dutyCycleUs = DEFRAG_CYCLE_US;
+        } else if (dutyCycleUs > DEFRAG_CYCLE_US * 10) {
+            /* Add a time limit for the defrag duty cycle to prevent excessive latency.
+             * When latency is already high (indicated by a long time between calls),
+             * we don't want to make it worse by running defrag for too long. */
+            dutyCycleUs = DEFRAG_CYCLE_US * 10;
+        }
     }
     return dutyCycleUs;
 }
@@ -1348,7 +1361,8 @@ static int computeDefragCycleUs(void) {
  * computeDefragCycleUs computation. */
 static int computeDelayMs(monotime intendedEndtime) {
     defrag.timeproc_end_time = getMonotonicUs();
-    defrag.timeproc_overage_us = defrag.timeproc_end_time - intendedEndtime;
+    long overage = defrag.timeproc_end_time - intendedEndtime;
+    defrag.timeproc_overage_us += overage; /* track over/under desired CPU */
     /* Allow negative overage (underage) to count against existing overage, but don't allow
      * underage (from short stages) to be accumulated. */
     if (defrag.timeproc_overage_us < 0) defrag.timeproc_overage_us = 0;
@@ -1360,8 +1374,8 @@ static int computeDelayMs(monotime intendedEndtime) {
     /* We want to achieve a specific CPU percent. To do that, we can't use a skewed computation. */
     /* Example, if we run for 1ms and delay 10ms, that's NOT 10%, because the total cycle time is 11ms. */
     /* Instead, if we rum for 1ms, our total time should be 10ms. So the delay is only 9ms. */
-    long totalCycleTimeUs = server.active_defrag_cycle_us * 100 / targetCpuPercent;
-    long delayUs = totalCycleTimeUs - server.active_defrag_cycle_us;
+    long totalCycleTimeUs = DEFRAG_CYCLE_US * 100 / targetCpuPercent;
+    long delayUs = totalCycleTimeUs - DEFRAG_CYCLE_US;
     /* Only increase delay by the fraction of the overage that would be non-duty-cycle */
     delayUs += defrag.timeproc_overage_us * (100 - targetCpuPercent) / 100;
     if (delayUs < 0) delayUs = 0;
@@ -1421,7 +1435,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
         /* If we've completed a stage early, and still have a standard time allotment remaining,
          * we'll start another stage. This can happen when defrag is running infrequently, and
          * starvation protection has increased the duty-cycle. */
-    } while (haveMoreWork && getMonotonicUs() <= endtime - server.active_defrag_cycle_us);
+    } while (haveMoreWork && getMonotonicUs() <= endtime - DEFRAG_CYCLE_US);
 
     latencyEndMonitor(latency);
     latencyAddSampleIfNeeded("active-defrag-cycle", latency);
