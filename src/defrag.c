@@ -23,7 +23,7 @@
 
 #ifdef HAVE_DEFRAG
 
-#define DEFRAG_CYCLE_US 500 /* The time spent (in microseconds) of the periodic active defrag process */
+#define DEFRAG_CYCLE_US 500 /* Standard duration of defrag cycle (in microseconds) */
 
 typedef enum { DEFRAG_NOT_DONE = 0,
                DEFRAG_DONE = 1 } doneStatus;
