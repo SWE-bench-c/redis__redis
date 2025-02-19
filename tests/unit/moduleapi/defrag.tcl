@@ -41,15 +41,24 @@ start_server {tags {"modules"} overrides {{save ""}}} {
         }
 
         test {Module defrag: global defrag works} {
+            r config set activedefrag no
+            wait_for_condition 100 50 {
+                [s active_defrag_running] eq 0
+            } else {
+                fail "Unable to wait for active defrag to stop"
+            }
+
             r flushdb
             r frag.resetstats
             r frag.create_frag_global
+            r config set activedefrag yes
 
             wait_for_condition 100 50 {
                 [getInfoProperty [r info defragtest_stats] defragtest_defrag_ended] > 0
             } else {
                 fail "Unable to wait for a complete defragmentation cycle to finish"
             }
+
             set info [r info defragtest_stats]
             assert {[getInfoProperty $info defragtest_global_strings_attempts] > 0}
             assert {[getInfoProperty $info defragtest_global_strings_pauses] > 0}
