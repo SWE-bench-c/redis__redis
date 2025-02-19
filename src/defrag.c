@@ -5,7 +5,7 @@
  * We do that by scanning the keyspace and for each pointer we have, we can try to
  * ask the allocator if moving it to a new address will help reduce fragmentation.
  *
- * Copyright (c) 2009-Present, Redis Ltd.
+ * Copyright (c) 2020-Present, Redis Ltd.
  * All rights reserved.
  *
  * Copyright (c) 2024-present, Valkey contributors.

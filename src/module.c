@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-Present, Redis Ltd.
+ * Copyright (c) 2016-Present, Redis Ltd.
  * All rights reserved.
  *
  * Copyright (c) 2024-present, Valkey contributors.
