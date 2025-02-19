@@ -9,7 +9,7 @@
  * struct.
  * This enables us to easily access all keys that map to a specific hash-slot.
  *
- * Copyright (c) 2009-Present, Redis Ltd.
+ * Copyright (c) 2011-Present, Redis Ltd. and contributors.
  * All rights reserved.
  *
  * Copyright (c) 2024-present, Valkey contributors.

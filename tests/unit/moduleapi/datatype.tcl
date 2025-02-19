@@ -190,7 +190,6 @@ start_server {tags {"modules"}} {
                 }
 
                 # Fuzzy test to restore defragmentation speed to normal
-                r config set active-defrag-cycle-us 100000 ;# Unlimit the time spent of defrag in slow env.
                 set end_time [expr {[clock seconds] + 10}]
                 set speed_restored 0
                 while {[clock seconds] < $end_time} {

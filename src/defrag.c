@@ -5,7 +5,7 @@
  * We do that by scanning the keyspace and for each pointer we have, we can try to
  * ask the allocator if moving it to a new address will help reduce fragmentation.
  *
- * Copyright (c) 2009-Present, Redis Ltd.
+ * Copyright (c) 2020-Present, Redis Ltd.
  * All rights reserved.
  *
  * Copyright (c) 2024-present, Valkey contributors.
@@ -22,6 +22,8 @@
 #include <math.h>
 
 #ifdef HAVE_DEFRAG
+
+#define DEFRAG_CYCLE_US 500 /* The time spent (in microseconds) of the periodic active defrag process */
 
 typedef enum { DEFRAG_NOT_DONE = 0,
                DEFRAG_DONE = 1 } doneStatus;
@@ -42,7 +44,7 @@ typedef enum { DEFRAG_NOT_DONE = 0,
  *  - DEFRAG_DONE if the stage is complete
  *  - DEFRAG_NOT_DONE if there is more work to do
  */
-typedef doneStatus (*defragStageFn)(monotime endtime, void *ctx);
+typedef doneStatus (*defragStageFn)(void *ctx, monotime endtime);
 
 /* Function pointer type for freeing context in defragmentation stages. */
 typedef void (*defragStageContextFreeFn)(void *ctx);
@@ -97,7 +99,7 @@ typedef struct {
  *  - DEFRAG_DONE if the pre-continue work is complete
  *  - DEFRAG_NOT_DONE if there is more work to do
  */
-typedef doneStatus (*kvstoreHelperPreContinueFn)(monotime endtime, void *ctx);
+typedef doneStatus (*kvstoreHelperPreContinueFn)(void *ctx, monotime endtime);
 
 typedef struct {
     kvstoreIterState kvstate;
@@ -866,7 +868,7 @@ void defragKey(defragKeysCtx *ctx, dictEntry *de) {
         }
     } else if (ob->type == OBJ_SET) {
         if (ob->encoding == OBJ_ENCODING_HT) {
-            defragSet(ctx,de);
+            defragSet(ctx, de);
         } else if (ob->encoding == OBJ_ENCODING_INTSET ||
                    ob->encoding == OBJ_ENCODING_LISTPACK)
         {
@@ -1023,7 +1025,7 @@ static int defragIsRunning(void) {
 }
 
 /* A kvstoreHelperPreContinueFn */
-static doneStatus defragLaterStep(monotime endtime, void *ctx) {
+static doneStatus defragLaterStep(void *ctx, monotime endtime) {
     defragKeysCtx *defrag_keys_ctx = ctx;
 
     unsigned int iterations = 0;
@@ -1138,7 +1140,7 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
         }
 
         if (precontinue_fn) {
-            if (precontinue_fn(endtime, ctx) == DEFRAG_NOT_DONE) return DEFRAG_NOT_DONE;
+            if (precontinue_fn(ctx, endtime) == DEFRAG_NOT_DONE) return DEFRAG_NOT_DONE;
         }
 
         if (!state->cursor) {
@@ -1160,7 +1162,7 @@ static doneStatus defragStageKvstoreHelper(monotime endtime,
     return DEFRAG_NOT_DONE;
 }
 
-static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
+static doneStatus defragStageDbKeys(void *ctx, monotime endtime) {
     defragKeysCtx *defrag_keys_ctx = ctx;
     redisDb *db = &server.db[defrag_keys_ctx->dbid];
     if (db->keys != defrag_keys_ctx->kvstate.kvs) {
@@ -1180,7 +1182,7 @@ static doneStatus defragStageDbKeys(monotime endtime, void *ctx) {
         dbKeysScanCallback, defragLaterStep, &defragfns);
 }
 
-static doneStatus defragStageExpiresKvstore(monotime endtime, void *ctx) {
+static doneStatus defragStageExpiresKvstore(void *ctx, monotime endtime) {
     defragKeysCtx *defrag_keys_ctx = ctx;
     redisDb *db = &server.db[defrag_keys_ctx->dbid];
     if (db->keys != defrag_keys_ctx->kvstate.kvs) {
@@ -1197,7 +1199,7 @@ static doneStatus defragStageExpiresKvstore(monotime endtime, void *ctx) {
         scanCallbackCountScanned, NULL, &defragfns);
 }
 
-static doneStatus defragStagePubsubKvstore(monotime endtime, void *ctx) {
+static doneStatus defragStagePubsubKvstore(void *ctx, monotime endtime) {
     static dictDefragFunctions defragfns = {
         .defragAlloc = activeDefragAlloc,
         .defragKey = NULL, /* Handled by defragPubsubScanCallback */
@@ -1208,7 +1210,7 @@ static doneStatus defragStagePubsubKvstore(monotime endtime, void *ctx) {
         defragPubsubScanCallback, NULL, &defragfns);
 }
 
-static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
+static doneStatus defragLuaScripts(void *ctx, monotime endtime) {
     UNUSED(endtime);
     UNUSED(ctx);
     activeDefragSdsDict(evalScriptsDict(), DEFRAG_SDS_DICT_VAL_LUA_SCRIPT);
@@ -1217,7 +1219,7 @@ static doneStatus defragLuaScripts(monotime endtime, void *ctx) {
 
 /* Handles defragmentation of module global data. This is a stage function
  * that gets called periodically during the active defragmentation process. */
-static doneStatus defragModuleGlobals(monotime endtime, void *ctx) {
+static doneStatus defragModuleGlobals(void *ctx, monotime endtime) {
     defragModuleCtx *defrag_module_ctx = ctx;
 
     RedisModule *module = moduleGetHandleByName(defrag_module_ctx->module_name);
@@ -1353,7 +1355,7 @@ static int computeDefragCycleUs(void) {
     if (defrag.timeproc_end_time == 0) {
         /* Either the first call to the timeProc, or we were paused for some reason. */
         defrag.timeproc_overage_us = 0;
-        dutyCycleUs = server.active_defrag_cycle_us;
+        dutyCycleUs = DEFRAG_CYCLE_US;
     } else {
         long waitedUs = getMonotonicUs() - defrag.timeproc_end_time;
         /* Given the elapsed wait time between calls, compute the necessary duty time needed to
@@ -1375,11 +1377,16 @@ static int computeDefragCycleUs(void) {
         dutyCycleUs -= defrag.timeproc_overage_us;
         defrag.timeproc_overage_us = 0;
 
-        if (dutyCycleUs < server.active_defrag_cycle_us) {
+        if (dutyCycleUs < DEFRAG_CYCLE_US) {
             /* We never reduce our cycle time, that would increase overhead. Instead, we track this
              * as part of the overage, and increase wait time between cycles. */
-            defrag.timeproc_overage_us = server.active_defrag_cycle_us - dutyCycleUs;
-            dutyCycleUs = server.active_defrag_cycle_us;
+            defrag.timeproc_overage_us = DEFRAG_CYCLE_US - dutyCycleUs;
+            dutyCycleUs = DEFRAG_CYCLE_US;
+        } else if (dutyCycleUs > DEFRAG_CYCLE_US * 10) {
+            /* Add a time limit for the defrag duty cycle to prevent excessive latency.
+             * When latency is already high (indicated by a long time between calls),
+             * we don't want to make it worse by running defrag for too long. */
+            dutyCycleUs = DEFRAG_CYCLE_US * 10;
         }
     }
     return dutyCycleUs;
@@ -1402,8 +1409,8 @@ static int computeDelayMs(monotime intendedEndtime) {
     /* We want to achieve a specific CPU percent. To do that, we can't use a skewed computation. */
     /* Example, if we run for 1ms and delay 10ms, that's NOT 10%, because the total cycle time is 11ms. */
     /* Instead, if we rum for 1ms, our total time should be 10ms. So the delay is only 9ms. */
-    long totalCycleTimeUs = server.active_defrag_cycle_us * 100 / targetCpuPercent;
-    long delayUs = totalCycleTimeUs - server.active_defrag_cycle_us;
+    long totalCycleTimeUs = DEFRAG_CYCLE_US * 100 / targetCpuPercent;
+    long delayUs = totalCycleTimeUs - DEFRAG_CYCLE_US;
     /* Only increase delay by the fraction of the overage that would be non-duty-cycle */
     delayUs += defrag.timeproc_overage_us * (100 - targetCpuPercent) / 100;
     if (delayUs < 0) delayUs = 0;
@@ -1453,7 +1460,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
         }
 
         StageDescriptor *stage = listNodeValue(defrag.current_stage);
-        doneStatus status = stage->stage_fn(endtime, stage->ctx);
+        doneStatus status = stage->stage_fn(stage->ctx, endtime);
         if (status == DEFRAG_DONE) {
             listDelNode(defrag.remaining_stages, defrag.current_stage);
             defrag.current_stage = NULL;
@@ -1463,7 +1470,7 @@ static int activeDefragTimeProc(struct aeEventLoop *eventLoop, long long id, voi
         /* If we've completed a stage early, and still have a standard time allotment remaining,
          * we'll start another stage. This can happen when defrag is running infrequently, and
          * starvation protection has increased the duty-cycle. */
-    } while (haveMoreWork && getMonotonicUs() <= endtime - server.active_defrag_cycle_us);
+    } while (haveMoreWork && getMonotonicUs() <= endtime - DEFRAG_CYCLE_US);
 
     latencyEndMonitor(latency);
     latencyAddSampleIfNeeded("active-defrag-cycle", latency);
