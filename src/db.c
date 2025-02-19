@@ -35,7 +35,8 @@ typedef enum {
     KEY_DELETED /* The key was deleted now. */
 } keyStatus;
 
-keyStatus expireIfNeeded(redisDb *db, robj *key, int flags, const int keySlot);
+static inline keyStatus expireIfNeededWithSlot(redisDb *db, robj *key, int flags, const int keySlot);
+keyStatus expireIfNeeded(redisDb *db, robj *key, int flags);
 int keyIsExpired(redisDb *db, robj *key);
 static void dbSetValue(redisDb *db, robj *key, robj *val, int overwrite, dictEntry *de);
 static inline dictEntry *dbFindWithKeySlot(redisDb *db, void *key, int keySlot);
@@ -144,7 +145,7 @@ robj *lookupKey(redisDb *db, robj *key, int flags, dictEntry **deref) {
             expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
         if (flags & LOOKUP_ACCESS_EXPIRED)
             expire_flags |= EXPIRE_ALLOW_ACCESS_EXPIRED;
-        if (expireIfNeeded(db, key, expire_flags, keySlot) != KEY_VALID) {
+        if (expireIfNeededWithSlot(db, key, expire_flags, keySlot) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
         }
@@ -441,7 +442,7 @@ robj *dbRandomKey(redisDb *db) {
              * return a key name that may be already expired. */
             return keyobj;
         }
-        if (expireIfNeeded(db,keyobj,0,getKeySlot(keyobj->ptr)) != KEY_VALID) {
+        if (expireIfNeededWithSlot(db,keyobj,0,randomSlot) != KEY_VALID) {
             decrRefCount(keyobj);
             continue; /* search for another key. This expired. */
         }
@@ -916,7 +917,7 @@ void delGenericCommand(client *c, int lazy) {
     int numdel = 0, j;
 
     for (j = 1; j < c->argc; j++) {
-        if (expireIfNeeded(c->db,c->argv[j],0,getKeySlot(c->argv[j]->ptr)) == KEY_DELETED)
+        if (expireIfNeeded(c->db,c->argv[j],0) == KEY_DELETED)
             continue;
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
                               dbSyncDelete(c->db,c->argv[j]);
@@ -1471,7 +1472,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
                 }
                 continue;
             }
-            if (expireIfNeeded(c->db, &kobj, 0, getKeySlot(kobj.ptr)) != KEY_VALID) {
+            if (expireIfNeeded(c->db, &kobj, 0) != KEY_VALID) {
                 listDelNode(keys, ln);
             }
         }
@@ -2240,7 +2241,11 @@ int keyIsExpired(redisDb *db, robj *key) {
  * The return value of the function is KEY_VALID if the key is still valid.
  * The function returns KEY_EXPIRED if the key is expired BUT not deleted,
  * or returns KEY_DELETED if the key is expired and deleted. */
-keyStatus expireIfNeeded(redisDb *db, robj *key, int flags, const int keySlot) {
+keyStatus expireIfNeeded(redisDb *db, robj *key, int flags) {
+    return expireIfNeededWithSlot(db,key,flags,getKeySlot(key->ptr));
+}
+
+static inline keyStatus expireIfNeededWithSlot(redisDb *db, robj *key, int flags, const int keySlot) {
     if ((server.allow_access_expired) ||
         (flags & EXPIRE_ALLOW_ACCESS_EXPIRED) ||
         (!keyIsExpiredWithSlot(db,key,keySlot)))
