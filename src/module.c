@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-Present, Redis Ltd.
+ * Copyright (c) 2016-Present, Redis Ltd.
  * All rights reserved.
  *
  * Copyright (c) 2024-present, Valkey contributors.
@@ -13794,6 +13794,9 @@ int RM_RegisterDefragFunc(RedisModuleCtx *ctx, RedisModuleDefragFunc cb) {
 
 /* Register a defrag callback for global data, i.e. anything that the module
  * may allocate that is not tied to a specific data type.
+ * This is a more advanced version of RM_RegisterDefragFunc, in that it takes
+ * a callbacks that has a return value, and can use RM_DefragShouldStop
+ * in and indicate that it should be called again later, or is it done (returned 0).
  */
 int RM_RegisterDefragFunc2(RedisModuleCtx *ctx, RedisModuleDefragFunc2 cb) {
     ctx->module->defrag_cb_2 = cb;
