@@ -221,7 +221,6 @@ start_server {tags {"modules"}} {
                         break;
                     }
                 }
-
                 assert_equal $speed_restored 1
 
                 # After the traffic disappears, the defragmentation speed will decrease again.
