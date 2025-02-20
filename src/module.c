@@ -13975,9 +13975,7 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
     } else {
         /* if cursor is non-zero, we seek to the static 'last' */
         if (!raxSeek(&ri,">", (*seekTo)->ptr, sdslen((*seekTo)->ptr))) {
-            *seekTo = NULL;
-            raxStop(&ri);
-            return NULL;
+            goto cleanup;
         }
         /* assign the iterator node callback after the seek, so that the
          * initial nodes that are processed till now aren't covered */
@@ -13995,6 +13993,8 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
             return newdict;
         }
     }
+cleanup:
+    if (*seekTo) RM_FreeString(NULL, *seekTo);
     *seekTo = NULL;
     raxStop(&ri);
     return newdict;

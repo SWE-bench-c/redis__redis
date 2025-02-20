@@ -105,17 +105,17 @@ static void createFragGlobalDicts(RedisModuleCtx *ctx) {
         RedisModuleDict *dict = global_dicts[i];
         if (!dict) continue;
 
-        RedisModuleDictIter *iter = RedisModule_DictIteratorStartC(dict, "^", NULL, 0);
         /* Handle dictionaries differently based on their index in global_dicts array:
         * 1. For odd indices (i % 2 == 1): Remove the entire dictionary.
          * 2. For even indices: Keep the dictionary but remove half of its items. */
         if (i % 2 == 1) {
+            RedisModuleDictIter *iter = RedisModule_DictIteratorStartC(dict, "^", NULL, 0);
             while ((key = RedisModule_DictNextC(iter, &keylen, (void**)&val))) {
                 RedisModule_FreeString(ctx, val);
             }
-            RedisModule_DictIteratorStop(iter);
             RedisModule_FreeDict(ctx, dict);
             global_dicts[i] = NULL;
+            RedisModule_DictIteratorStop(iter);
         } else {
             int key_index = 0;
             RedisModuleDictIter *iter = RedisModule_DictIteratorStartC(dict, "^", NULL, 0);
@@ -125,8 +125,8 @@ static void createFragGlobalDicts(RedisModuleCtx *ctx) {
                     RedisModule_DictReplaceC(dict, key, keylen, NULL);
                 }
             }
+            RedisModule_DictIteratorStop(iter);
         }
-        RedisModule_DictIteratorStop(iter);
     }
 }
 
