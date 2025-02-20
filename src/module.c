@@ -13983,7 +13983,7 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
     }
 
     while (raxNext(&ri)) {
-        void *newdata = valueCB(ri.data, ri.key, ri.key_len);
+        void *newdata = valueCB(ctx, ri.data, ri.key, ri.key_len);
         if (newdata)
             raxSetData(ri.node, ri.data=newdata);
         if (RM_DefragShouldStop(ctx)) {

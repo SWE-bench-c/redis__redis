@@ -130,11 +130,11 @@ static void createFragGlobalDicts(RedisModuleCtx *ctx) {
     }
 }
 
-static void *defragGlobalDictValueCB(void *data, unsigned char *key, size_t keylen) {
+static void *defragGlobalDictValueCB(RedisModuleDefragCtx *ctx, void *data, unsigned char *key, size_t keylen) {
     REDISMODULE_NOT_USED(key);
     REDISMODULE_NOT_USED(keylen);
     if (!data) return NULL;
-    return RedisModule_DefragRedisModuleString(NULL, data);
+    return RedisModule_DefragRedisModuleString(ctx, data);
 }
 
 static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
