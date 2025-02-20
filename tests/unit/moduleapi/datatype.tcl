@@ -190,15 +190,17 @@ start_server {tags {"modules"}} {
                 }
 
                 # Fuzzy test to restore defragmentation speed to normal
-                set end_time [expr {[clock seconds] + 10}]
+                set end_time [expr {[clock seconds] + 100}]
                 set speed_restored 0
                 while {[clock seconds] < $end_time} {
                     switch [expr {int(rand() * 3)}] {
                         0 {
-                            # Randomly delete a key
-                            set random_key [r RANDOMKEY]
-                            if {$random_key != ""} {
-                                r DEL $random_key
+                            # Randomly delete some keys
+                            for {set i 0} {$i < 100} {incr i} {
+                                set random_key [r RANDOMKEY]
+                                if {$random_key != ""} {
+                                    r DEL $random_key
+                                }
                             }
                         }
                         1 {
@@ -209,9 +211,11 @@ start_server {tags {"modules"}} {
                             }
                         }
                         2 {
-                            # Randomly generate a new key
-                            set random_key "key_[expr {int(rand() * 10000)}]"
-                            r datatype.set $random_key 1 $dummy
+                            # Randomly generate some new keys
+                            for {set i 0} {$i < 100} {incr i} {
+                                set random_key "key_[expr {int(rand() * 1000000)}]"
+                                r datatype.set $random_key 1 $dummy
+                            }
                         }
                     }
 
