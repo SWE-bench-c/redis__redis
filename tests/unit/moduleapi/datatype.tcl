@@ -214,8 +214,8 @@ start_server {tags {"modules"}} {
                             set random_key "key_[expr {int(rand() * 1000000)}]"
                             r datatype.set $random_key 1 $dummy
                         }
-                    }
-                    }
+                    } ;# end of switch
+                    } ;# end of for
 
                     if {{[count_log_message $loglines "*Starting active defrag, frag=*%, frag_bytes=*, cpu=5?%*"]} > 1} {
                         set speed_restored 1
