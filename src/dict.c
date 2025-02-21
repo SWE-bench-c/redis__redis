@@ -73,22 +73,12 @@ static int dictDefaultCompare(dict *d, const void *key1, const void *key2);
 /* -------------------------- misc inline functions -------------------------------- */
 
 typedef int (*keyCmpFunc)(dict *d, const void *key1, const void *key2);
-typedef size_t (*keyLenFunc)(dict *d, const void *key1);
-typedef int (*keyCmpFuncWithLen)(dict *d, const void *key1, const size_t key1_len, const void *key2, const size_t key2_len);
 static inline keyCmpFunc dictGetKeyCmpFunc(dict *d) {
     if (d->useStoredKeyApi && d->type->storedKeyCompare)
         return d->type->storedKeyCompare;
     if (d->type->keyCompare)
         return d->type->keyCompare;
     return dictDefaultCompare;
-}
-
-static inline keyCmpFuncWithLen dictGetKeyCmpFuncWithLen(dict *d) {
-    return d->type->keyCompareWithLen;
-}
-
-static inline keyLenFunc dictGetKeyLenFunc(dict *d) {
-    return d->type->keyLen;
 }
 
 static inline uint64_t dictHashKey(dict *d, const void *key, int isStoredKey) {
@@ -807,7 +797,7 @@ dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
             /* Prefetch the next entry to improve cache efficiency */
             redis_prefetch_read(dictGetNext(he));
             if (key == he_key || (has_len_fn ?
-                cmpFuncWithLen(d, key, key_len, he_key, (keyLenFunc(d,he_key))) : 
+                cmpFuncWithLen(d, key, key_len, he_key, (keyLenFunc(d,he_key))) :
                 cmpFunc(d, key, he_key)))
            {
                 return he;

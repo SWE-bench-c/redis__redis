@@ -28,6 +28,8 @@
 
 typedef struct dictEntry dictEntry; /* opaque */
 typedef struct dict dict;
+typedef size_t (*keyLenFunc)(dict *d, const void *key1);
+typedef int (*keyCmpFuncWithLen)(dict *d, const void *key1, const size_t key1_len, const void *key2, const size_t key2_len);
 
 typedef struct dictType {
     /* Callbacks */
