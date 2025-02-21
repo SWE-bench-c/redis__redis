@@ -14009,9 +14009,10 @@ int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime end
     moduleValue *mv = value->ptr;
     moduleType *mt = mv->type;
 
-    RedisModuleDefragCtx defrag_ctx = { endtime, cursor, key, dbid};
     /* Interval shouldn't exceed 1 hour. */
     serverAssert(!endtime || llabs((long long)endtime - (long long)getMonotonicUs()) < 60*60*1000*1000LL);
+
+    RedisModuleDefragCtx defrag_ctx = { endtime, cursor, key, dbid};
 
     /* Invoke callback. Note that the callback may be missing if the key has been
      * replaced with a different type since our last visit.
