@@ -125,7 +125,7 @@ void updateKeysizesHist(redisDb *db, int didx, uint32_t type, uint64_t oldLen, u
  * in the replication link. */
 robj *lookupKey(redisDb *db, robj *key, int flags, dictEntry **deref) {
     const int keySlot = getKeySlot(key->ptr);
-    dictEntry *de = dbFindWithKeySlot(db, key->ptr, keySlot);
+    dictEntry *de = dbFindWithKeySlot(db, key->ptr, key_slot);
     robj *val = NULL;
     if (de) {
         val = dictGetVal(de);
@@ -442,7 +442,7 @@ robj *dbRandomKey(redisDb *db) {
              * return a key name that may be already expired. */
             return keyobj;
         }
-        if (expireIfNeededWithSlot(db,keyobj,0,randomSlot) != KEY_VALID) {
+        if (expireIfNeededWithSlot(db,keyobj,0,random_slot) != KEY_VALID) {
             decrRefCount(keyobj);
             continue; /* search for another key. This expired. */
         }
