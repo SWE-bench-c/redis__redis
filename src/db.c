@@ -2175,7 +2175,7 @@ void propagateDeletion(redisDb *db, robj *key, int lazy) {
     decrRefCount(argv[1]);
 }
 
-/* Internal Check if the key is expired based uppon mstime_t. */
+/* Internal Check if the key is expired based upon mstime_t. */
 static inline int keyIsExpiredInternal(mstime_t when) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
