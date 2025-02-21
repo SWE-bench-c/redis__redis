@@ -1007,10 +1007,9 @@ int defragLaterItem(dictEntry *de, unsigned long *cursor, monotime endtime, int 
         } else if (ob->type == OBJ_STREAM) {
             return scanLaterStreamListpacks(ob, cursor, endtime);
         } else if (ob->type == OBJ_MODULE) {
-            long long endtimeWallClock = ustime() + (endtime - getMonotonicUs());
             robj keyobj;
             initStaticStringObject(keyobj, dictGetKey(de));
-            return moduleLateDefrag(&keyobj, ob, cursor, endtimeWallClock, dbid);
+            return moduleLateDefrag(&keyobj, ob, cursor, endtime, dbid);
         } else {
             *cursor = 0; /* object type may have changed since we schedule it for later */
         }
@@ -1230,6 +1229,7 @@ static doneStatus defragModuleGlobals(void *ctx, monotime endtime) {
 
     /* Set up context for the module's defrag callback. */
     defrag_module_ctx->module_ctx->endtime = endtime;
+    serverAssert(!endtime || endtime - getMonotonicUs() < 3600000000LL); /* interval shouldn't exceed 1 hour  */
     defrag_module_ctx->module_ctx->cursor = &defrag_module_ctx->cursor;
 
     /* Call appropriate version of module's defrag callback:
