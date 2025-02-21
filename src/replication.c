@@ -780,7 +780,7 @@ int replicationSetupSlaveForFullResync(client *slave, long long offset) {
     /* Don't send this reply to slaves that approached us with
      * the old SYNC command. */
     if (!(slave->flags & CLIENT_PRE_PSYNC)) {
-        if (slave->slave_req & SLAVE_REQ_RDB_CHANNEL) {
+        if (slave->flags & CLIENT_REPL_RDB_CHANNEL) {
             /* This slave is rdbchannel. Find its associated main channel and
              * change its state so we can deliver replication stream from now
              * on, in parallel to rdb. */
@@ -1352,8 +1352,14 @@ void replconfCommand(client *c) {
             if (getRangeLongFromObjectOrReply(c,c->argv[j+1],
                     0,1,&rdb_only,NULL) != C_OK)
                 return;
-            if (rdb_only == 1) c->flags |= CLIENT_REPL_RDBONLY;
-            else c->flags &= ~CLIENT_REPL_RDBONLY;
+            if (rdb_only == 1) {
+                c->flags |= CLIENT_REPL_RDBONLY;
+                /* If replicas ask for RDB only, we can transfer RDB in the background */
+                c->slave_req |= SLAVE_REQ_RDB_CHANNEL;
+            } else {
+                c->flags &= ~CLIENT_REPL_RDBONLY;
+                c->slave_req &= ~SLAVE_REQ_RDB_CHANNEL;
+            }
         } else if (!strcasecmp(c->argv[j]->ptr,"rdb-filter-only")) {
             /* REPLCONFG RDB-FILTER-ONLY is used to define "include" filters
              * for the RDB snapshot. Currently we only support a single
@@ -1385,12 +1391,10 @@ void replconfCommand(client *c) {
             long rdb_channel = 0;
             if (getRangeLongFromObjectOrReply(c, c->argv[j + 1], 0, 1, &rdb_channel, NULL) != C_OK)
                 return;
-            if (rdb_channel == 1 && server.repl_rdb_channel && server.repl_diskless_sync) {
+            if (rdb_channel == 1) {
                 c->flags |= CLIENT_REPL_RDB_CHANNEL;
-                c->slave_req |= SLAVE_REQ_RDB_CHANNEL;
             } else {
                 c->flags &= ~CLIENT_REPL_RDB_CHANNEL;
-                c->slave_req &= ~SLAVE_REQ_RDB_CHANNEL;
             }
         } else if (!strcasecmp(c->argv[j]->ptr, "main-ch-client-id")) {
             /* REPLCONF main-ch-client-id <client-id> is used to identify
