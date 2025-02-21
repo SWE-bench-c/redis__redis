@@ -1226,11 +1226,11 @@ static doneStatus defragModuleGlobals(void *ctx, monotime endtime) {
         /* Module has been unloaded, nothing to defrag. */
         return DEFRAG_DONE;
     }
+    /* Interval shouldn't exceed 1 hour  */
+    serverAssert(!endtime || llabs((long long)endtime - (long long)getMonotonicUs()) < 60*60*1000*1000LL);
 
     /* Set up context for the module's defrag callback. */
     defrag_module_ctx->module_ctx->endtime = endtime;
-    /* Interval shouldn't exceed 1 hour  */
-    serverAssert(!endtime || llabs((long long)endtime - (long long)getMonotonicUs()) < 60*60*1000*1000LL);
     defrag_module_ctx->module_ctx->cursor = &defrag_module_ctx->cursor;
 
     /* Call appropriate version of module's defrag callback:
