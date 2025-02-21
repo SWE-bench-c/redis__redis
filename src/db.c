@@ -124,7 +124,7 @@ void updateKeysizesHist(redisDb *db, int didx, uint32_t type, uint64_t oldLen, u
  * expired on replicas even if the master is lagging expiring our key via DELs
  * in the replication link. */
 robj *lookupKey(redisDb *db, robj *key, int flags, dictEntry **deref) {
-    const int keySlot = getKeySlot(key->ptr);
+    const int key_slot = getKeySlot(key->ptr);
     dictEntry *de = dbFindWithKeySlot(db, key->ptr, key_slot);
     robj *val = NULL;
     if (de) {
@@ -145,7 +145,7 @@ robj *lookupKey(redisDb *db, robj *key, int flags, dictEntry **deref) {
             expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
         if (flags & LOOKUP_ACCESS_EXPIRED)
             expire_flags |= EXPIRE_ALLOW_ACCESS_EXPIRED;
-        if (expireIfNeededWithSlot(db, key, expire_flags, keySlot) != KEY_VALID) {
+        if (expireIfNeededWithSlot(db, key, expire_flags, key_slot) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
         }
@@ -425,8 +425,8 @@ robj *dbRandomKey(redisDb *db) {
     while(1) {
         sds key;
         robj *keyobj;
-        int randomSlot = kvstoreGetFairRandomDictIndex(db->keys);
-        de = kvstoreDictGetFairRandomKey(db->keys, randomSlot);
+        int random_slot = kvstoreGetFairRandomDictIndex(db->keys);
+        de = kvstoreDictGetFairRandomKey(db->keys, random_slot);
         if (de == NULL) return NULL;
 
         key = dictGetKey(de);
@@ -2175,39 +2175,26 @@ void propagateDeletion(redisDb *db, robj *key, int lazy) {
     decrRefCount(argv[1]);
 }
 
-/* Check if the key is expired. */
-static inline int keyIsExpiredWithSlot(redisDb *db, robj *key, int keySlot) {
+/* Internal Check if the key is expired based uppon mstime_t. */
+static inline int keyIsExpiredInternal(mstime_t when) {
     /* Don't expire anything while loading. It will be done later. */
-    if (unlikely(server.loading)) return 0;
-
-    mstime_t when = getExpireWithSlot(db,key,keySlot);
-    mstime_t now;
-
+    if (server.loading) return 0;
     if (when < 0) return 0; /* No expire for this key */
-
-    now = commandTimeSnapshot();
-
+    const mstime_t now = commandTimeSnapshot();
     /* The key expired if the current (virtual or real) time is greater
      * than the expire time of the key. */
     return now > when;
 }
 
+/* Check if the key is expired. */
+static inline int keyIsExpiredWithSlot(redisDb *db, robj *key, int keySlot) {
+    return keyIsExpiredInternal(getExpireWithSlot(db,key,keySlot));
+}
+
 
 /* Check if the key is expired. */
 int keyIsExpired(redisDb *db, robj *key) {
-    /* Don't expire anything while loading. It will be done later. */
-    if (server.loading) return 0;
-
-    mstime_t when = getExpire(db,key);
-    mstime_t now;
-
-    if (when < 0) return 0; /* No expire for this key */
-
-    now = commandTimeSnapshot();
-
-    /* The key expired if the current (virtual or real) time is greater
-     * than the expire time of the key. */
-    return now > when;
+    return keyIsExpiredInternal(getExpire(db,key));
 }
 
 /* This function is called when we are going to perform some operation
