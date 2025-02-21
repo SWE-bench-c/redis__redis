@@ -278,7 +278,6 @@ void dictDictDestructor(dict *d, void *val)
 
 size_t dictSdsLen(dict *d, const void *key) {
     UNUSED(d);
-
     return sdslen((sds)key);
 }
 

@@ -74,7 +74,7 @@ static int dictDefaultCompare(dict *d, const void *key1, const void *key2);
 
 typedef int (*keyCmpFunc)(dict *d, const void *key1, const void *key2);
 typedef size_t (*keyLenFunc)(dict *d, const void *key1);
-typedef int (*keyCmpFuncWithLen)(dict *d, const void *key1, const size_t key1Len, const void *key2, const size_t key2Len);
+typedef int (*keyCmpFuncWithLen)(dict *d, const void *key1, const size_t key1_len, const void *key2, const size_t key2_len);
 static inline keyCmpFunc dictGetKeyCmpFunc(dict *d) {
     if (d->useStoredKeyApi && d->type->storedKeyCompare)
         return d->type->storedKeyCompare;
@@ -789,8 +789,8 @@ dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
     _dictRehashStepIfNeeded(d,idx);
 
     /* Check if we can use the compare function with length to avoid recomputing length of key always */
-    keyCmpFuncWithLen cmpFuncWithLen = dictGetKeyCmpFuncWithLen(d);
-    keyLenFunc keyLenFunc = dictGetKeyLenFunc(d);
+    keyCmpFuncWithLen cmpFuncWithLen = d->type->keyCompareWithLen;
+    keyLenFunc keyLenFunc = d->type->keyLen;
     const int has_len_fn = (keyLenFunc != NULL && cmpFuncWithLen != NULL);
     const size_t key_len = has_len_fn ? keyLenFunc(d,key) : 0;
     for (table = 0; table <= 1; table++) {
@@ -806,9 +806,12 @@ dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
 
             /* Prefetch the next entry to improve cache efficiency */
             redis_prefetch_read(dictGetNext(he));
-            if (key == he_key ||
-                (has_len_fn ? cmpFuncWithLen(d, key, key_len, he_key, (keyLenFunc(d,he_key))): cmpFunc(d, key, he_key)))
+            if (key == he_key || (has_len_fn ?
+                cmpFuncWithLen(d, key, key_len, he_key, (keyLenFunc(d,he_key))) : 
+                cmpFunc(d, key, he_key)))
+           {
                 return he;
+            }
             he = dictGetNext(he);
         }
         /* Use unlikely to optimize branch prediction for the common case */
