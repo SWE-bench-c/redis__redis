@@ -1229,7 +1229,7 @@ static doneStatus defragModuleGlobals(void *ctx, monotime endtime) {
 
     /* Set up context for the module's defrag callback. */
     defrag_module_ctx->module_ctx->endtime = endtime;
-    serverAssert(!endtime || endtime - getMonotonicUs() < 3600000000LL); /* interval shouldn't exceed 1 hour  */
+    serverAssert(!endtime || endtime - getMonotonicUs() < 3600000LL); /* interval shouldn't exceed 1 hour  */
     defrag_module_ctx->module_ctx->cursor = &defrag_module_ctx->cursor;
 
     /* Call appropriate version of module's defrag callback:
