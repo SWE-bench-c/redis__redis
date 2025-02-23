@@ -43,8 +43,7 @@ static void createGlobalStrings(RedisModuleCtx *ctx, unsigned long count)
     global_strings = RedisModule_Alloc(sizeof(RedisModuleString *) * count);
 
     for (unsigned long i = 0; i < count; i++) {
-        char buf[64] = {0};
-        global_strings[i] = RedisModule_CreateString(ctx, buf, 64);
+        global_strings[i] = RedisModule_CreateStringFromLongLong(ctx, i);
     }
 }
 
@@ -75,7 +74,7 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
 static void createFragGlobalStrings(RedisModuleCtx *ctx) {
     for (unsigned long i = 0; i < global_strings_len; i++) {
         if (i % 2 == 1) {
-            RedisModule_FreeString(ctx, global_strings[i]);
+            RedisModule_FreeString(NULL, global_strings[i]);
             global_strings[i] = NULL;
         }
     }
@@ -179,18 +178,18 @@ static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
 typedef enum { DEFRAG_NOT_START, DEFRAG_STRING, DEFRAG_DICT } defrag_module_stage;
 static int defragGlobal(RedisModuleDefragCtx *ctx) {
     static defrag_module_stage stage = DEFRAG_NOT_START;
-    if (stage == DEFRAG_NOT_START) {
-        stage = DEFRAG_STRING; /* Start a new global defrag. */
-    }
+    // if (stage == DEFRAG_NOT_START) {
+    //     stage = DEFRAG_STRING; /* Start a new global defrag. */
+    // }
 
-    if (stage == DEFRAG_STRING) {
+    // if (stage == DEFRAG_STRING) {
         if (defragGlobalStrings(ctx) != 0) return 1;
-        stage = DEFRAG_DICT;
-    }
-    if (stage == DEFRAG_DICT) {
-        if (defragGlobalDicts(ctx) != 0) return 1;
-        stage = DEFRAG_NOT_START;
-    }
+    //     stage = DEFRAG_DICT;
+    // }
+    // if (stage == DEFRAG_DICT) {
+    //     if (defragGlobalDicts(ctx) != 0) return 1;
+    //     stage = DEFRAG_NOT_START;
+    // }
     return 0;
 }
 
@@ -300,7 +299,7 @@ static int fragCreateGlobalCommand(RedisModuleCtx *ctx, RedisModuleString **argv
         return RedisModule_WrongArity(ctx);
 
     createFragGlobalStrings(ctx);
-    createFragGlobalDicts(ctx);
+    // createFragGlobalDicts(ctx);
     RedisModule_ReplyWithSimpleString(ctx, "OK");
     return REDISMODULE_OK;
 }
