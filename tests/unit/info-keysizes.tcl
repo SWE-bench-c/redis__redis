@@ -668,7 +668,7 @@ proc test_all_keysizes { {replMode 0} } {
         run_cmd_verify_hist {$server DEBUG RELOAD} {db0_STR:8=1 db0_LIST:4=1}
         run_cmd_verify_hist {$server DEL l10} {db0_STR:8=1}
         run_cmd_verify_hist {$server DEBUG RELOAD} {db0_STR:8=1}
-    } {OK} {cluster:skip needs:debug}
+    } {} {cluster:skip needs:debug}
 
     test "KEYSIZES - Test RDB $suffixRepl" {
         run_cmd_verify_hist {$server FLUSHALL} {}
