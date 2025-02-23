@@ -74,7 +74,7 @@ static int defragGlobalStrings(RedisModuleDefragCtx *ctx)
 static void createFragGlobalStrings(RedisModuleCtx *ctx) {
     for (unsigned long i = 0; i < global_strings_len; i++) {
         if (i % 2 == 1) {
-            RedisModule_FreeString(NULL, global_strings[i]);
+            RedisModule_FreeString(ctx, global_strings[i]);
             global_strings[i] = NULL;
         }
     }
