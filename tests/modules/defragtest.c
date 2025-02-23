@@ -178,18 +178,18 @@ static int defragGlobalDicts(RedisModuleDefragCtx *ctx) {
 typedef enum { DEFRAG_NOT_START, DEFRAG_STRING, DEFRAG_DICT } defrag_module_stage;
 static int defragGlobal(RedisModuleDefragCtx *ctx) {
     static defrag_module_stage stage = DEFRAG_NOT_START;
-    // if (stage == DEFRAG_NOT_START) {
-    //     stage = DEFRAG_STRING; /* Start a new global defrag. */
-    // }
+    if (stage == DEFRAG_NOT_START) {
+        stage = DEFRAG_STRING; /* Start a new global defrag. */
+    }
 
-    // if (stage == DEFRAG_STRING) {
+    if (stage == DEFRAG_STRING) {
         if (defragGlobalStrings(ctx) != 0) return 1;
-    //     stage = DEFRAG_DICT;
-    // }
-    // if (stage == DEFRAG_DICT) {
-    //     if (defragGlobalDicts(ctx) != 0) return 1;
-    //     stage = DEFRAG_NOT_START;
-    // }
+        stage = DEFRAG_DICT;
+    }
+    if (stage == DEFRAG_DICT) {
+        if (defragGlobalDicts(ctx) != 0) return 1;
+        stage = DEFRAG_NOT_START;
+    }
     return 0;
 }
 
@@ -299,7 +299,7 @@ static int fragCreateGlobalCommand(RedisModuleCtx *ctx, RedisModuleString **argv
         return RedisModule_WrongArity(ctx);
 
     createFragGlobalStrings(ctx);
-    // createFragGlobalDicts(ctx);
+    createFragGlobalDicts(ctx);
     RedisModule_ReplyWithSimpleString(ctx, "OK");
     return REDISMODULE_OK;
 }
