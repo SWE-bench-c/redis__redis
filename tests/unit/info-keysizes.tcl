@@ -607,8 +607,8 @@ proc test_all_keysizes { {replMode 0} } {
             run_cmd_verify_hist {$server SORT user_ids BY user:*->score GET user:*->name GET user:*->score}  {db0_LIST:1=1}
 
             $server debug set-active-expire 1
-        }
-    }    
+        } {OK} {cluster:skip needs:debug}
+    }
     
     test "KEYSIZES - Test STRING BITS $suffixRepl" {
         # BITOPS
