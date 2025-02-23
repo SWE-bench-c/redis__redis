@@ -43,7 +43,8 @@ static void createGlobalStrings(RedisModuleCtx *ctx, unsigned long count)
     global_strings = RedisModule_Alloc(sizeof(RedisModuleString *) * count);
 
     for (unsigned long i = 0; i < count; i++) {
-        global_strings[i] = RedisModule_CreateStringFromLongLong(ctx, i);
+        char buf[64] = {0};
+        global_strings[i] = RedisModule_CreateString(ctx, buf, 64);
     }
 }
 
