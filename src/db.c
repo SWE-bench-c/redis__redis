@@ -82,9 +82,9 @@ void updateKeysizesHist(redisDb *db, int didx, uint32_t type, int64_t oldLen, in
         if(dictMeta) dictMeta->keysizes_hist[type][old_bin]--;
         kvstoreMeta->keysizes_hist[type][old_bin]--;
     } else {
-        /* here, oldLen can be either length 0 or -1 */
+        /* here, oldLen can be either 0 or -1 */
         if (oldLen == 0) {
-            if(dictMeta) dictMeta->keysizes_hist[type][0]--;
+            if (dictMeta) dictMeta->keysizes_hist[type][0]--;
             kvstoreMeta->keysizes_hist[type][0]--;
         }
     }
@@ -97,9 +97,9 @@ void updateKeysizesHist(redisDb *db, int didx, uint32_t type, int64_t oldLen, in
         if(dictMeta) dictMeta->keysizes_hist[type][new_bin]++;
         kvstoreMeta->keysizes_hist[type][new_bin]++;
     } else {
-        /* here, newLen can be either length 0 or -1 */
+        /* here, newLen can be either 0 or -1 */
         if (newLen == 0) {
-            if(dictMeta) dictMeta->keysizes_hist[type][0]++;
+            if (dictMeta) dictMeta->keysizes_hist[type][0]++;
             kvstoreMeta->keysizes_hist[type][0]++;
         }
     }
