@@ -799,7 +799,7 @@ dictEntry *dictFindByHash(dict *d, const void *key, const uint64_t hash) {
             if (key == he_key || (has_len_fn ?
                 cmpFuncWithLen(d, key, key_len, he_key, keyLenFunc(d,he_key)) :
                 cmpFunc(d, key, he_key)))
-           {
+            {
                 return he;
             }
             he = dictGetNext(he);

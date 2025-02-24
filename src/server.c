@@ -282,7 +282,7 @@ size_t dictSdsLen(dict *d, const void *key) {
 }
 
 int dictSdsKeyCompareWithLen(dict *d, const void *key1, const size_t l1,
-        const void *key2,  const size_t l2)
+                                      const void *key2, const size_t l2)
 {
     UNUSED(d);
     if (l1 != l2) return 0;
