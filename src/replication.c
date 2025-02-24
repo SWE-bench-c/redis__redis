@@ -1354,8 +1354,10 @@ void replconfCommand(client *c) {
                 return;
             if (rdb_only == 1) {
                 c->flags |= CLIENT_REPL_RDBONLY;
-                /* If replicas ask for RDB only, we can transfer RDB in the background */
-                c->slave_req |= SLAVE_REQ_RDB_CHANNEL;
+                /* If replicas ask for RDB only, We can apply the background
+                 * RDB transfer optimization based on the configurations. */
+                if (server.repl_rdb_channel && server.repl_diskless_sync)
+                    c->slave_req |= SLAVE_REQ_RDB_CHANNEL;
             } else {
                 c->flags &= ~CLIENT_REPL_RDBONLY;
                 c->slave_req &= ~SLAVE_REQ_RDB_CHANNEL;
