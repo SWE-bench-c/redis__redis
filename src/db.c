@@ -2190,6 +2190,7 @@ static inline int keyIsExpiredInternal(mstime_t when) {
 static inline int keyIsExpiredWithSlot(redisDb *db, robj *key, int keySlot) {
     return keyIsExpiredInternal(getExpireWithSlot(db,key,keySlot));
 }
+
 /* Check if the key is expired. */
 int keyIsExpired(redisDb *db, robj *key) {
     return keyIsExpiredInternal(getExpire(db,key));
