@@ -425,8 +425,8 @@ robj *dbRandomKey(redisDb *db) {
     while(1) {
         sds key;
         robj *keyobj;
-        int random_slot = kvstoreGetFairRandomDictIndex(db->keys);
-        de = kvstoreDictGetFairRandomKey(db->keys, random_slot);
+        int randomSlot = kvstoreGetFairRandomDictIndex(db->keys);
+        de = kvstoreDictGetFairRandomKey(db->keys, randomSlot);
         if (de == NULL) return NULL;
 
         key = dictGetKey(de);
@@ -442,7 +442,7 @@ robj *dbRandomKey(redisDb *db) {
              * return a key name that may be already expired. */
             return keyobj;
         }
-        if (expireIfNeededWithSlot(db,keyobj,0,random_slot) != KEY_VALID) {
+        if (expireIfNeededWithSlot(db,keyobj,0,randomSlot) != KEY_VALID) {
             decrRefCount(keyobj);
             continue; /* search for another key. This expired. */
         }
