@@ -276,7 +276,7 @@ void dictDictDestructor(dict *d, void *val)
     dictRelease((dict*)val);
 }
 
-size_t dictSdsLen(dict *d, const void *key) {
+size_t dictSdsKeyLen(dict *d, const void *key) {
     UNUSED(d);
     return sdslen((sds)key);
 }
@@ -513,7 +513,7 @@ dictType dbDictType = {
     dictSdsDestructor,          /* key destructor */
     dictObjectDestructor,       /* val destructor */
     dictResizeAllowed,          /* allow to resize */
-    .keyLen = dictSdsLen,       /* key length */
+    .keyLen = dictSdsKeyLen,    /* key length */
     .keyCompareWithLen = dictSdsKeyCompareWithLen /* key compare with length */
 };
 
