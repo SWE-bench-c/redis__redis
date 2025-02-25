@@ -2299,7 +2299,7 @@ void xreadCommand(client *c) {
                                 "just return an empty result set.");
                 goto cleanup;
             }
-            if (o) {
+            if (o && ((stream *)o->ptr)->length) {
                 stream *s = o->ptr;
                 /* We need to get the last valid ID.
                  * It is impossible to use s->last_id because
