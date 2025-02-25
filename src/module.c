@@ -13824,8 +13824,9 @@ int RM_RegisterDefragCallbacks(RedisModuleCtx *ctx, RedisModuleDefragFunc start,
  * When stopped and more work is left to be done, the callback should
  * return 1. Otherwise, it should return 0.
  *
- * NOTE: Modules should consider the frequency in which this function is called,
- * so it generally makes sense to do small batches of work in between calls.
+ * NOTE: We use certain thresholds to avoid excessive system calls.
+ * Time checks are only performed when any threshold is reached,
+ * which means we might slightly exceed the expected end time.
  */
 int RM_DefragShouldStop(RedisModuleDefragCtx *ctx) {
     if (ctx->stopping) /* Return immediately if already stopping */
@@ -13833,8 +13834,7 @@ int RM_DefragShouldStop(RedisModuleDefragCtx *ctx) {
     if (!ctx->endtime) /* Return if no time limit set */
         return 0;
         
-    /* Check if we need to stop, but to avoid excessive system calls,
-     * only check time when any threshold is reached. */
+    /* Check time when any threshold is reached. */
     if (++ctx->ops_count > 128 ||
         (ctx->last_stop_check_hits != -1 && server.stat_active_defrag_hits - ctx->last_stop_check_hits >= 512) ||
         (ctx->last_stop_check_misses != -1 && server.stat_active_defrag_misses - ctx->last_stop_check_misses >= 1024))
