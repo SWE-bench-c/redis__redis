@@ -909,6 +909,10 @@ struct RedisModuleDefragCtx {
     unsigned long *cursor;
     struct redisObject *key; /* Optional name of key processed, NULL when unknown. */
     int dbid;                /* The dbid of the key being processed, -1 when unknown. */
+    long last_stop_check_hits; /* Number of successful defrag hits at last check. */
+    long last_stop_check_misses; /* Number of defrag misses at last check. */
+    int stopping; /* Flag indicating if defrag should stop. */
+    int ops_count; /* Counter for operations since last time check. */
 };
 
 /* This is a wrapper for the 'rio' streams used inside rdb.c in Redis, so that
