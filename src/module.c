@@ -13830,7 +13830,9 @@ int RM_DefragShouldStop(RedisModuleDefragCtx *ctx) {
     if (!ctx->endtime) /* Return if no time limit set */
         return 0;
 
-    /* Check time when any threshold is reached. */
+    /* We use certain thresholds to avoid excessive system calls.
+     * Time checks are only performed when any threshold is reached,
+     * which means we might slightly exceed the expected end time. */
     if (server.stat_active_defrag_hits - ctx->last_stop_check_hits >= 512 ||
         server.stat_active_defrag_misses - ctx->last_stop_check_misses >= 1024)
     {
