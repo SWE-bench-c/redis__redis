@@ -781,6 +781,53 @@ void lcsCommand(client *c) {
         goto cleanup;
     }
 
+    /*
+     * If user only requests the LCS length (getlen == 1)
+     * and does NOT specify IDX (getidx == 0), we can use a rolling array
+     * approach to reduce memory usage from O(M*N) to O(min(M,N)).
+     */
+    if (getlen && !getidx) {
+        uint32_t alen = sdslen(a);
+        uint32_t blen = sdslen(b);
+
+        if (alen == 0 || blen == 0) {
+            addReplyLongLong(c, 0);
+            goto cleanup; /* Must ensure we decrRefCount below. */
+        }
+
+        if (alen > blen) {
+            sds tmp = a; a = b; b = tmp;
+            uint32_t tlen = alen; alen = blen; blen = tlen;
+        }
+
+        uint32_t *prev = zmalloc((alen+1)*sizeof(uint32_t));
+        uint32_t *curr = zmalloc((alen+1)*sizeof(uint32_t));
+        memset(prev, 0, (alen+1)*sizeof(uint32_t));
+        memset(curr, 0, (alen+1)*sizeof(uint32_t));
+
+        for (uint32_t col = 1; col <= blen; col++) {
+            for (uint32_t row = 1; row <= alen; row++) {
+                if (a[row-1] == b[col-1]) {
+                    curr[row] = prev[row-1] + 1;
+                } else {
+                    curr[row] = (prev[row] > curr[row-1]) ? prev[row] : curr[row-1];
+                }
+            }
+            /* Swap rolling arrays */
+            uint32_t *temp = prev;
+            prev = curr;
+            curr = temp;
+        }
+
+        uint32_t lcs_len = prev[alen];
+        zfree(prev);
+        zfree(curr);
+
+        /* Return the length of the LCS. */
+        addReplyLongLong(c, lcs_len);
+        goto cleanup;
+    }
+
     /* Compute the LCS using the vanilla dynamic programming technique of
      * building a table of LCS(x,y) substrings. */
     uint32_t alen = sdslen(a);
@@ -860,7 +907,6 @@ void lcsCommand(client *c) {
             /* If there is a match, store the character and reduce
              * the indexes to look for a new match. */
             result[idx-1] = a[i-1];
-
             /* Track the current range. */
             if (arange_start == alen) {
                 arange_start = i-1;
@@ -936,4 +982,3 @@ cleanup:
     if (objb) decrRefCount(objb);
     return;
 }
-
