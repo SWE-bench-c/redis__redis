@@ -36,19 +36,23 @@ static void listTypeTryConvertListpack(robj *o, robj **argv, int start, int end,
         add_length = end - start + 1;
     }
 
+    size_t lp_cur_bytes = lpBytes(o->ptr);
+    unsigned long lp_cur_length = lpLength(o->ptr);
+
     if (quicklistNodeExceedsLimit(server.list_max_listpack_size,
-            lpBytes(o->ptr) + add_bytes, lpLength(o->ptr) + add_length))
+            lp_cur_bytes + add_bytes, lp_cur_length + add_length))
     {
-        /* Invoke callback before conversion. */
+        /* Invoke callback before conversion */
         if (fn) fn(data);
 
         quicklist *ql = quicklistNew(server.list_max_listpack_size, server.list_compress_depth);
 
-        /* Append listpack to quicklist if it's not empty, otherwise release it. */
-        if (lpLength(o->ptr))
+        /* Append listpack to quicklist if it's not empty, otherwise release it */
+        if (lp_cur_length != 0)
             quicklistAppendListpack(ql, o->ptr);
         else
             lpFree(o->ptr);
+
         o->ptr = ql;
         o->encoding = OBJ_ENCODING_QUICKLIST;
     }
