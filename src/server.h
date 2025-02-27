@@ -891,6 +891,7 @@ struct RedisModule {
     int blocked_clients;         /* Count of RedisModuleBlockedClient in this module. */
     RedisModuleInfoFunc info_cb; /* Callback for module to add INFO fields. */
     RedisModuleDefragFunc defrag_cb;    /* Callback for global data defrag. */
+    RedisModuleDefragFunc2 defrag_cb_2; /* Version 2 callback for global data defrag. */
     RedisModuleDefragFunc defrag_start_cb;    /* Callback indicating defrag started. */
     RedisModuleDefragFunc defrag_end_cb;      /* Callback indicating defrag ended. */
     struct moduleLoadQueueEntry *loadmod; /* Module load arguments for config rewrite. */
@@ -899,6 +900,25 @@ struct RedisModule {
     size_t num_acl_categories_added; /* Number of acl categories added by this module. */
 };
 typedef struct RedisModule RedisModule;
+
+/* The defrag context, used to manage state during calls to the data type
+ * defrag callback.
+ */
+struct RedisModuleDefragCtx {
+    monotime endtime;
+    unsigned long *cursor;
+    struct redisObject *key; /* Optional name of key processed, NULL when unknown. */
+    int dbid;                /* The dbid of the key being processed, -1 when unknown. */
+    long long last_stop_check_hits; /* Number of defrag hits at last check. */
+    long long last_stop_check_misses; /* Number of defrag misses at last check. */
+    int stopping; /* Flag indicating if defrag should stop. */
+};
+#define INIT_MODULE_DEFRAG_CTX(endtime, cursor, key, dbid) \
+    ((RedisModuleDefragCtx) {               \
+        (endtime), (cursor), (key), (dbid), \
+        server.stat_active_defrag_hits,     \
+        server.stat_active_defrag_misses    \
+    })
 
 /* This is a wrapper for the 'rio' streams used inside rdb.c in Redis, so that
  * the user does not have to take the total count of the written bytes nor
@@ -1051,7 +1071,6 @@ typedef struct redisDb {
     int id;                     /* Database ID */
     long long avg_ttl;          /* Average TTL, just for stats */
     unsigned long expires_cursor; /* Cursor of the active expire cycle. */
-    list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
 } redisDb;
 
 /* forward declaration for functions ctx */
@@ -2675,8 +2694,7 @@ size_t moduleGetFreeEffort(robj *key, robj *val, int dbid);
 size_t moduleGetMemUsage(robj *key, robj *val, size_t sample_size, int dbid);
 robj *moduleTypeDupOrReply(client *c, robj *fromkey, robj *tokey, int todb, robj *value);
 int moduleDefragValue(robj *key, robj *obj, int dbid);
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid);
-void moduleDefragGlobals(void);
+int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid);
 void moduleDefragStart(void);
 void moduleDefragEnd(void);
 void *moduleGetHandleByName(char *modulename);
@@ -3269,6 +3287,7 @@ void enterExecutionUnit(int update_cached_time, long long us);
 void exitExecutionUnit(void);
 void resetServerStats(void);
 void activeDefragCycle(void);
+void defragWhileBlocked(void);
 unsigned int getLRUClock(void);
 unsigned int LRU_CLOCK(void);
 const char *evictPolicyToString(void);
@@ -3356,14 +3375,15 @@ typedef struct dictExpireMetadata {
 #define HASH_SET_COPY 0
 
 /* Hash field lazy expiration flags. Used by core hashTypeGetValue() and its callers */
-#define HFE_LAZY_EXPIRE           (0) /* Delete expired field, and if last field also the hash */
-#define HFE_LAZY_AVOID_FIELD_DEL  (1<<0) /* Avoid deleting expired field */
-#define HFE_LAZY_AVOID_HASH_DEL   (1<<1) /* Avoid deleting hash if the field is the last one */
-#define HFE_LAZY_NO_NOTIFICATION  (1<<2) /* Do not send notification, used when multiple fields
-                                          * may expire and only one notification is desired. */
-#define HFE_LAZY_NO_SIGNAL        (1<<3) /* Do not send signal, used when multiple fields
-                                          * may expire and only one signal is desired. */
-#define HFE_LAZY_ACCESS_EXPIRED   (1<<4) /* Avoid lazy expire and allow access to expired fields */
+#define HFE_LAZY_EXPIRE              (0)    /* Delete expired field, and if last field also the hash */
+#define HFE_LAZY_AVOID_FIELD_DEL     (1<<0) /* Avoid deleting expired field */
+#define HFE_LAZY_AVOID_HASH_DEL      (1<<1) /* Avoid deleting hash if the field is the last one */
+#define HFE_LAZY_NO_NOTIFICATION     (1<<2) /* Do not send notification, used when multiple fields
+                                             * may expire and only one notification is desired. */
+#define HFE_LAZY_NO_SIGNAL           (1<<3)    /* Do not send signal, used when multiple fields
+                                             * may expire and only one signal is desired. */
+#define HFE_LAZY_ACCESS_EXPIRED      (1<<4) /* Avoid lazy expire and allow access to expired fields */
+#define HFE_LAZY_NO_UPDATE_KEYSIZES  (1<<5) /* If field lazy deleted, avoid updating keysizes histogram */
 
 void hashTypeConvert(robj *o, int enc, ebuckets *hexpires);
 void hashTypeTryConversion(redisDb *db, robj *subject, robj **argv, int start, int end);
@@ -3506,7 +3526,7 @@ long long getModuleNumericConfig(ModuleConfig *module_config);
 int setModuleNumericConfig(ModuleConfig *config, long long val, const char **err);
 
 /* db.c -- Keyspace access API */
-void updateKeysizesHist(redisDb *db, int didx, uint32_t type, uint64_t oldLen, uint64_t newLen);
+void updateKeysizesHist(redisDb *db, int didx, uint32_t type, int64_t oldLen, int64_t newLen);
 int removeExpire(redisDb *db, robj *key);
 void deleteExpiredKeyAndPropagate(redisDb *db, robj *keyobj);
 void deleteEvictedKeyAndPropagate(redisDb *db, robj *keyobj, long long *key_mem_freed);
@@ -3725,7 +3745,9 @@ void startEvictionTimeProc(void);
 uint64_t dictSdsHash(const void *key);
 uint64_t dictPtrHash(const void *key);
 uint64_t dictSdsCaseHash(const void *key);
+size_t dictSdsKeyLen(dict *d, const void *key);
 int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
+int dictSdsKeyCompareWithLen(dict *d, const void *key1, const size_t l1,const void *key2, const size_t l2);
 int dictSdsMstrKeyCompare(dict *d, const void *sdsLookup, const void *mstrStored);
 int dictSdsKeyCaseCompare(dict *d, const void *key1, const void *key2);
 void dictSdsDestructor(dict *d, void *val);
