@@ -1768,9 +1768,9 @@ void freeClient(client *c) {
 
     /* Free data structures. */
     /* If redis is evicting clients, we don't want to free the output buffer
-     * synchronously, because we need to release the memory asap to avoid
+     * asynchronously, because we need to release the memory asap to avoid
      * more clients being evicted. Otherwise, we can free the output buffer
-     * synchronously to avoid blocking server since the output buffer list
+     * asynchronously to avoid blocking server since the output buffer list
      * may be very long. */
     if (server.is_evicting_clients) {
         listRelease(c->reply);
