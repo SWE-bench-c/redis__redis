@@ -931,23 +931,23 @@ void *dictFetchValue(dict *d, const void *key) {
     return he ? dictGetVal(he) : NULL;
 }
 
-/* Find an element from the table, also get the plink of the entry. The entry
- * is returned if the element is found, and the user should later call
- * `dictTwoPhaseUnlinkFree` with it in order to unlink and release it. Otherwise if
- * the key is not found, NULL is returned. These two functions should be used in pair.
+/* Find an element from the table. A link is returned if the element is found, and
+ * the user should later call `dictTwoPhaseUnlinkFree` with it in order to unlink
+ * and release it. Otherwise if the key is not found, NULL is returned. These two
+ * functions should be used in pair.
  * `dictTwoPhaseUnlinkFind` pauses rehash and `dictTwoPhaseUnlinkFree` resumes rehash.
  *
  * We can use like this:
  *
- * dictEntry *de = dictTwoPhaseUnlinkFind(db->dict,key->ptr,&plink, &table);
+ * dictEntLink link = dictTwoPhaseUnlinkFind(db->dict,key->ptr, &table);
  * // Do something, but we can't modify the dict
- * dictTwoPhaseUnlinkFree(db->dict,de,plink,table); // We don't need to lookup again
+ * dictTwoPhaseUnlinkFree(db->dict, link, table); // We don't need to lookup again
  *
  * If we want to find an entry before delete this entry, this an optimization to avoid
  * dictFind followed by dictDelete. i.e. the first API is a find, and it gives some info
  * to the second one to avoid repeating the lookup
  */
-dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntLink *plink, int *table_index) {
+dictEntLink dictTwoPhaseUnlinkFind(dict *d, const void *key, int *table_index) {
     uint64_t h, idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
@@ -964,9 +964,8 @@ dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntLink *plink, 
             void *de_key = dictGetKey(*ref);
             if (key == de_key || cmpFunc(d, key, de_key)) {
                 *table_index = table;
-                *plink = ref;
                 dictPauseRehashing(d);
-                return *ref;
+                return ref;
             }
             ref = dictGetNextLink(*ref);
         }
@@ -975,13 +974,15 @@ dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntLink *plink, 
     return NULL;
 }
 
-void dictTwoPhaseUnlinkFree(dict *d, dictEntry *he, dictEntLink plink, int table_index) {
-    if (he == NULL) return;
+void dictTwoPhaseUnlinkFree(dict *d, dictEntLink plink, int table_index) {
+    if (plink == NULL || *plink == NULL) return;
+    dictEntry *de = *plink;
     d->ht_used[table_index]--;
-    *plink = dictGetNext(he);
-    dictFreeKey(d, he);
-    dictFreeVal(d, he);
-    if (!entryIsKey(he)) zfree(decodeMaskedPtr(he));
+
+    *plink = dictGetNext(de);
+    dictFreeKey(d, de);
+    dictFreeVal(d, de);
+    if (!entryIsKey(de)) zfree(decodeMaskedPtr(de));
     _dictShrinkIfNeeded(d);
     dictResumeRehashing(d);
 }

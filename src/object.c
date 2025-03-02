@@ -20,8 +20,6 @@
 #define strtold(a,b) ((long double)strtod((a),(b)))
 #endif
 
-static kvobj *createEmbeddedStringObject(const char *ptr, size_t len);
-
 /* For objects with large embedded keys, we reserve space for an expire field,
  * so if expire is set later, we don't need to reallocate the object. */
 #define KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD 128
@@ -30,7 +28,7 @@ static kvobj *createEmbeddedStringObject(const char *ptr, size_t len);
 
 /* Creates an object, optionally with embedded key and expire fields. The key
  * and expire fields can be omitted by passing NULL and -1, respectively. */
-kvobj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long expire) {
+kvobj *kvobjCreate(int type, const sds key, void *valptr, long long expire) {
     /* Calculate sizes */
     int has_expire = (expire != -1 ||
                       (key != NULL && sdslen(key) >= KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD));
@@ -50,7 +48,7 @@ kvobj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long lon
     robj *o = zmalloc_usable(min_size, &bufsize);
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
-    o->ptr = ptr;
+    o->ptr = valptr;
     o->refcount = 1;
     o->lru = 0;
     o->iskvobj = (key != NULL);
@@ -59,7 +57,7 @@ kvobj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long lon
      * don't need it now. Then we don't need to realloc if it's needed later. */
     if (key != NULL && !has_expire && bufsize >= min_size + sizeof(long long)) {
         has_expire = 1;
-        min_size += sizeof(long long); //sizeof(ExpireMeta);
+        min_size += sizeof(long long);
     }
     o->expirable = has_expire;
 
@@ -68,7 +66,7 @@ kvobj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long lon
 
     /* Set the expire field. */
     if (o->expirable) {
-            *(long long *)data = expire;
+        *(long long *)data = expire;
         data += sizeof(long long);
     }
 
@@ -81,8 +79,8 @@ kvobj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long lon
     return o;
 }
 
-robj *createObject(int type, void *ptr) {
-    return createObjectWithKeyAndExpire(type, ptr, NULL, -1);
+robj *createObject(int type, void *valptr) {
+    return kvobjCreate(type, NULL, valptr, -1);
 }
 
 void initObjectLRUOrLFU(robj *o) {
@@ -123,7 +121,7 @@ robj *createRawStringObject(const char *ptr, size_t len) {
 
 /* Creates a new embedded string object and copies the content of key, val and
  * expire to the new object. LRU is set to 0. */
-static kvobj *createEmbdStrObjWithKeyAndExpire(const char *val_ptr,
+static kvobj *kvobjCreateEmbedString(const char *val_ptr,
                                                size_t val_len,
                                                const sds key,
                                                long long expire)
@@ -198,23 +196,7 @@ static kvobj *createEmbdStrObjWithKeyAndExpire(const char *val_ptr,
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
-    return createEmbdStrObjWithKeyAndExpire(ptr, len, NULL, -1);
-}
-
-/* Create `kvobj` object of key and value to be registered in the keyspace */
-kvobj *createStringObjectWithKeyAndExpire(const char *ptr, size_t len, const sds key, long long expire) {
-    /* When to embed? Embed when the sum is up to 64 bytes. There may be better
-     * heuristics, e.g. we can look at the jemalloc sizes (16-byte intervals up
-     * to 128 bytes). */
-    size_t size = sizeof(kvobj);
-    size += (key != NULL) * (sdslen(key) + 3); /* hdr size (1) + hdr (1) + nullterm (1) */
-    size += (expire != -1) * sizeof(long long);
-    size += 4 + len; /* embstr header (3) + nullterm (1) */
-    if (size <= 64) {
-        return createEmbdStrObjWithKeyAndExpire(ptr, len, key, expire);
-    } else {
-        return createObjectWithKeyAndExpire(OBJ_STRING, sdsnewlen(ptr, len), key, expire);
-    }
+    return kvobjCreateEmbedString(ptr, len, NULL, -1);
 }
 
 sds kvobjGetKey(const kvobj *kv) {
@@ -243,7 +225,7 @@ long long kvobjGetExpire(const kvobj *kv) {
 /* This functions may reallocate the value. The new allocation is returned and
  * the old object's reference counter is decremented and possibly freed. Use the
  * returned object instead of 'val' after calling this function. */
-kvobj *objectSetExpire(kvobj *kv, long long expire) {
+kvobj *kvobjSetExpire(kvobj *kv, long long expire) {
     if (kv->expirable) {
         /* Update existing expire field. */
         unsigned char *data = (void *)(kv + 1);
@@ -252,40 +234,53 @@ kvobj *objectSetExpire(kvobj *kv, long long expire) {
     } else if (expire == -1) {
         return kv;
     } else {
-        return objectSetKeyAndExpire(kv, kvobjGetKey(kv), expire);
+        return kvobjSet(kvobjGetKey(kv), kv, expire);
     }
 }
 
 /* This functions may reallocate the value. The new allocation is returned and
  * the old object's reference counter is decremented and possibly freed. Use the
  * returned object instead of 'val' after calling this function. */
-kvobj *objectSetKeyAndExpire(robj *val, sds key, long long expire) {
+kvobj *kvobjSet(sds key, robj *val, long long expire) {
     if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_EMBSTR) {
-        kvobj *new = createStringObjectWithKeyAndExpire(val->ptr, sdslen(val->ptr), key, expire);
-        new->lru = val->lru;
+        kvobj *kv;
+        size_t len = sdslen(val->ptr);
+
+        /* Embed when the sum is up to 64 bytes. */
+        size_t size = sizeof(kvobj);
+        size += (key != NULL) * (sdslen(key) + 3); /* hdr size (1) + hdr (1) + nullterm (1) */
+        size += (expire != -1) * sizeof(long long);
+        size += 4 + len; /* embstr header (3) + nullterm (1) */
+        if (size <= CACHE_LINE_SIZE) {
+            kv = kvobjCreateEmbedString(val->ptr, len, key, expire);
+        } else {
+            kv = kvobjCreate(OBJ_STRING, key, sdsnewlen(val->ptr, len), expire);
+        }
+
+        kv->lru = val->lru;
         decrRefCount(val);
-        return new;
+        return kv;
     }
 
     /* Create a new object with embedded key. Reuse ptr if possible. */
-    void *ptr;
+    void *valptr;
     if (val->refcount == 1) {
         /* Reuse the ptr. There are no other references to val. */
-        ptr = val->ptr;
+        valptr = val->ptr;
         val->ptr = NULL;
     } else if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_INT) {
         /* The pointer is not allocated memory. We can just copy the pointer. */
-        ptr = val->ptr;
+        valptr = val->ptr;
     } else if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_RAW) {
         /* Dup the string. */
-        ptr = sdsdup(val->ptr);
+        valptr = sdsdup(val->ptr);
     } else {
         serverAssert(val->type != OBJ_STRING);
         /* There are multiple references to this non-string object. Most types
          * can be duplicated, but for a module type is not always possible. */
         serverPanic("Not implemented");
     }
-    robj *new = createObjectWithKeyAndExpire(val->type, ptr, key, expire);
+    robj *new = kvobjCreate(val->type, key, valptr, expire);
     new->encoding = val->encoding;
     new->lru = val->lru;
     decrRefCount(val);
@@ -564,6 +559,7 @@ void decrRefCount(robj *o) {
             default: serverPanic("Unknown object type"); break;
             }
         }
+        o->refcount = 0; /* Try to catch use after free */
         zfree(o);
     } else {
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
@@ -1622,12 +1618,12 @@ int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle,
 
 /* This is a helper function for the OBJECT command. We need to lookup keys
  * without any modification of LRU or other parameters. */
-kvobj *objectCommandLookup(client *c, robj *key) {
+kvobj *kvobjCommandLookup(client *c, robj *key) {
     return lookupKeyReadWithFlags(c->db,key,LOOKUP_NOTOUCH|LOOKUP_NONOTIFY);
 }
 
-kvobj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
-    kvobj *kv = objectCommandLookup(c,key);
+kvobj *kvobjCommandLookupOrReply(client *c, robj *key, robj *reply) {
+    kvobj *kv = kvobjCommandLookup(c,key);
     if (!kv) addReplyOrErrorObject(c, reply);
     return kv;
 }
@@ -1655,15 +1651,15 @@ NULL
         };
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr,"refcount") && c->argc == 3) {
-        if ((kv = objectCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
         addReplyLongLong(c, kv->refcount);
     } else if (!strcasecmp(c->argv[1]->ptr,"encoding") && c->argc == 3) {
-        if ((kv = objectCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
         addReplyBulkCString(c,strEncoding(kv->encoding));
     } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) {
-        if ((kv = objectCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
         if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
             addReplyError(c,"An LFU maxmemory policy is selected, idle time not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
@@ -1671,7 +1667,7 @@ NULL
         }
         addReplyLongLong(c, estimateObjectIdleTime(kv) / 1000);
     } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
-        if ((kv = objectCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
         if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) {
             addReplyError(c,"An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");

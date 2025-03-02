@@ -2989,9 +2989,9 @@ unsigned long long estimateObjectIdleTime(robj *o);
 void trimStringObjectIfNeeded(robj *o, int trim_small_values);
 #define sdsEncodedObject(objptr) (objptr->encoding == OBJ_ENCODING_RAW || objptr->encoding == OBJ_ENCODING_EMBSTR)
 
-kvobj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long expire);
-kvobj *objectSetKeyAndExpire(robj *val, sds key, long long expire);
-kvobj *objectSetExpire(kvobj *kv, long long expire);
+kvobj *kvobjCreate(int type, const sds key, void *valptr, long long expire);
+kvobj *kvobjSet(sds key, robj *val, long long expire);
+kvobj *kvobjSetExpire(kvobj *kv, long long expire);
 sds kvobjGetKey(const kvobj *kv); 
 long long kvobjGetExpire(const kvobj *val);
 
@@ -3541,8 +3541,8 @@ kvobj *lookupKeyReadOrReply(client *c, robj *key, robj *reply);
 kvobj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply);
 kvobj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags);
 kvobj *lookupKeyWriteWithFlags(redisDb *db, robj *key, int flags);
-kvobj *objectCommandLookup(client *c, robj *key);
-kvobj *objectCommandLookupOrReply(client *c, robj *key, robj *reply);
+kvobj *kvobjCommandLookup(client *c, robj *key);
+kvobj *kvobjCommandLookupOrReply(client *c, robj *key, robj *reply);
 int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle,
                        long long lru_clock, int lru_multiplier);
 #define LOOKUP_NONE 0

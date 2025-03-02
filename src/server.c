@@ -281,7 +281,7 @@ static uint64_t dictHashKV(const void *kv) {
     return dictGenHashFunction(sdsKey, sdslen(sdsKey));
 }
 
-int dictKvCompareKV(dict *d, const void *kv1, const void *kv2)
+int dictCompareKV(dict *d, const void *kv1, const void *kv2)
 { 
     sds key1 = kvobjGetKey((kvobj *) kv1);
     sds key2 = kvobjGetKey((kvobj *) kv2);
@@ -528,7 +528,7 @@ dictType dbDictType = {
     .no_value = 1,          /* keys and values are unified (kvobj) */
     .keys_are_odd = 0,      /* simple kvobj (robj) struct */
     .storedHashFunction = dictHashKV,  /* stored hash function */
-    .storedKeyCompare = dictKvCompareKV, /* stored key compare */            
+    .storedKeyCompare = dictCompareKV, /* stored key compare */            
 };
 
 /* Db->expires */
@@ -543,7 +543,7 @@ dictType dbExpiresDictType = {
     .no_value = 1,              /* keys and values are unified (kvobj) */
     .keys_are_odd = 0,          /* simple kvobj (robj) struct */
     .storedHashFunction = dictHashKV,  /* stored hash function */
-    .storedKeyCompare = dictKvCompareKV, /* stored key compare */
+    .storedKeyCompare = dictCompareKV, /* stored key compare */
 };
 
 /* Command table. sds string -> command struct pointer. */

@@ -1759,7 +1759,7 @@ void zsetTypeRandomElement(robj *zsetobj, unsigned long zsetsize, listpackEntry 
 void zaddGenericCommand(client *c, int flags) {
     static char *nanerr = "resulting score is not a number (NaN)";
     robj *key = c->argv[1];
-    robj *zobj;
+    robj *kv;
     sds ele;
     double score = 0, *scores = NULL;
     int j, elements, ch = 0;
@@ -1833,24 +1833,24 @@ void zaddGenericCommand(client *c, int flags) {
     }
 
     /* Lookup the key and create the sorted set if does not exist. */
-    zobj = lookupKeyWrite(c->db,key);
-    if (checkType(c,zobj,OBJ_ZSET)) goto cleanup;
-    if (zobj == NULL) {
+    kv = lookupKeyWrite(c->db, key);
+    if (checkType(c, kv, OBJ_ZSET)) goto cleanup;
+    if (kv == NULL) {
         if (xx) goto reply_to_client; /* No key + XX option: nothing to do. */
-        zobj = zsetTypeCreate(elements, sdslen(c->argv[scoreidx+1]->ptr));
-        dbAdd(c->db,key,&zobj);
+        robj *o = zsetTypeCreate(elements, sdslen(c->argv[scoreidx + 1]->ptr));
+        kv = dbAdd(c->db,key,&o);
     } else {
-        zsetTypeMaybeConvert(zobj, elements);
+        zsetTypeMaybeConvert(kv, elements);
     }
 
-    unsigned long llen = zsetLength(zobj);
+    unsigned long llen = zsetLength(kv);
     for (j = 0; j < elements; j++) {
         double newscore;
         score = scores[j];
         int retflags = 0;
 
         ele = c->argv[scoreidx+1+j*2]->ptr;
-        int retval = zsetAdd(zobj, score, ele, flags, &retflags, &newscore);
+        int retval = zsetAdd(kv, score, ele, flags, &retflags, &newscore);
         if (retval == 0) {
             addReplyError(c,nanerr);
             goto cleanup;

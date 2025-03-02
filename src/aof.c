@@ -2372,7 +2372,7 @@ int rewriteAppendOnlyFileRio(rio *aof) {
         while((de = kvstoreIteratorNext(kvs_it)) != NULL) {
             long long expiretime;
             size_t aof_bytes_before_key = aof->processed_bytes;
-            
+
             /* Get the value object (of type kvobj) */
             kvobj *kv = dictGetKV(de);
             

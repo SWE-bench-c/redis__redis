@@ -754,9 +754,9 @@ void defragKey(defragCtx *ctx, dictEntry *de, dictEntLink link) {
         kvnew = activeDefragStringOb(kv);
     }
     if (kvnew) {
-        kvstoreDictSetKeyAtLink(db->keys, slot, kvnew, &link, 0);
+        kvstoreDictSetAtLink(db->keys, slot, kvnew, &link, 0);
         if (expire != -1)
-            kvstoreDictSetKeyAtLink(db->expires, slot, kvnew, &exlink, 0);
+            kvstoreDictSetAtLink(db->expires, slot, kvnew, &exlink, 0);
         kv = kvnew;
     }
 

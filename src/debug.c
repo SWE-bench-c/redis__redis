@@ -681,7 +681,7 @@ NULL
     } else if (!strcasecmp(c->argv[1]->ptr,"listpack") && c->argc == 3) {
         kvobj *kv;
 
-        if ((kv = objectCommandLookupOrReply(c, c->argv[2], shared.nokeyerr))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.nokeyerr))
                 == NULL) return;
 
         if (kv->encoding != OBJ_ENCODING_LISTPACK && kv->encoding != OBJ_ENCODING_LISTPACK_EX) {
@@ -697,7 +697,7 @@ NULL
     } else if (!strcasecmp(c->argv[1]->ptr,"quicklist") && (c->argc == 3 || c->argc == 4)) {
         kvobj *kv;
 
-        if ((kv = objectCommandLookupOrReply(c, c->argv[2], shared.nokeyerr))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.nokeyerr))
             == NULL) return;
 
         int full = 0;
@@ -940,7 +940,7 @@ NULL
         if (c->argc >= 4 && !strcasecmp(c->argv[3]->ptr,"full"))
             full = 1;
 
-        if ((kv = objectCommandLookupOrReply(c,c->argv[2],shared.nokeyerr))
+        if ((kv = kvobjCommandLookupOrReply(c,c->argv[2],shared.nokeyerr))
                 == NULL) return;
 
         /* Get the hash table reference from the object, if possible. */

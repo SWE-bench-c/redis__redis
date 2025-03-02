@@ -815,11 +815,6 @@ void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn) 
     }
 }
 
-uint64_t kvstoreGetHash(kvstore *kvs, const void *key)
-{
-    return kvs->dtype.hashFunction(key);
-}
-
 void *kvstoreDictFetchValue(kvstore *kvs, int didx, const void *key)
 {
     dict *d = kvstoreGetDict(kvs, didx);
@@ -849,16 +844,16 @@ dictEntry *kvstoreDictFind(kvstore *kvs, int didx, void *key) {
  *   
  * Important: 
  * After calling kvstoreDictFindLink(), any necessary updates based on returned 
- * link or bucket must be made immediately after, commonly by kvstoreDictSetKeyAtLink() 
+ * link or bucket must be made immediately after, commonly by kvstoreDictSetAtLink() 
  * without any operations in between that might modify the dict. Otherwise, 
  * the link or bucket may become invalid. Example usage:
  *
  *      link = kvstoreDictFindLink(kvs, didx, key, &bucket);
  *      ... Do something, but don't modify kvs->dicts[didx] ...
  *      if (link)
- *          kvstoreDictSetKeyAtLink(kvs, didx, kv, &link, 0);   // Update existing entry
+ *          kvstoreDictSetAtLink(kvs, didx, kv, &link, 0);   // Update existing entry
  *      else
- *          kvstoreDictSetKeyAtLink(kvs, didx, kv, &bucket, 1); // Insert new entry
+ *          kvstoreDictSetAtLink(kvs, didx, kv, &bucket, 1); // Insert new entry
  */
 dictEntLink kvstoreDictFindLink(kvstore *kvs, int didx, void *key, dictEntLink *bucket) {
     if (bucket) *bucket = NULL;    
@@ -880,7 +875,7 @@ dictEntLink kvstoreDictFindLink(kvstore *kvs, int didx, void *key, dictEntLink *
  * newItem: - If set, add a new key with a new dictEntry.
  *          - If not set, update the key of an existing dictEntry.
  */
-void kvstoreDictSetKeyAtLink(kvstore *kvs, int didx, void *kv, dictEntLink *link, int newItem) {
+void kvstoreDictSetAtLink(kvstore *kvs, int didx, void *kv, dictEntLink *link, int newItem) {
     dict *d;
     if (newItem) {
         d = createDictIfNeeded(kvs, didx);
@@ -913,16 +908,16 @@ void kvstoreDictSetVal(kvstore *kvs, int didx, dictEntry *de, void *val) {
     dictSetVal(d, de, val);
 }
 
-dictEntry *kvstoreDictTwoPhaseUnlinkFind(kvstore *kvs, int didx, const void *key, dictEntLink *plink, int *table_index) {
+dictEntLink kvstoreDictTwoPhaseUnlinkFind(kvstore *kvs, int didx, const void *key, int *table_index) {
     dict *d = kvstoreGetDict(kvs, didx);
     if (!d)
         return NULL;
-    return dictTwoPhaseUnlinkFind(kvstoreGetDict(kvs, didx), key, plink, table_index);
+    return dictTwoPhaseUnlinkFind(kvstoreGetDict(kvs, didx), key, table_index);
 }
 
-void kvstoreDictTwoPhaseUnlinkFree(kvstore *kvs, int didx, dictEntry *he, dictEntLink link, int table_index) {
+void kvstoreDictTwoPhaseUnlinkFree(kvstore *kvs, int didx, dictEntLink link, int table_index) {
     dict *d = kvstoreGetDict(kvs, didx);
-    dictTwoPhaseUnlinkFree(d, he, link, table_index);
+    dictTwoPhaseUnlinkFree(d, link, table_index);
     cumulativeKeyCountAdd(kvs, didx, -1);
     freeDictIfNeeded(kvs, didx);
 }

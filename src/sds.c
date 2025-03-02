@@ -482,15 +482,14 @@ sds sdscatlen(sds s, const void *t, size_t len) {
 /* This method copies the sds `s` into `buf` which is the target character buffer. */
 size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, const sds s, uint8_t *hdr_size) {
     /* min amount of bytes required to store the sds header + data + NULL */
-    size_t sdsminlen = sdslen(s) + sdsHdrSize(s[-1]) + 1;
-    size_t required_keylen = sdsminlen;
+    size_t required_len = sdslen(s) + sdsHdrSize(s[-1]) + 1;
     if (buf == NULL) {
-        return required_keylen;
+        return required_len;
     }
-    assert(buf_len >= required_keylen);
-    memcpy(buf, sdsAllocPtr(s), required_keylen);
+    assert(buf_len >= required_len);
+    memcpy(buf, sdsAllocPtr(s), required_len);
     *hdr_size = sdsHdrSize(s[-1]);
-    return required_keylen;
+    return required_len;
 }
 
 /* Append the specified null terminated C string to the sds string 's'.

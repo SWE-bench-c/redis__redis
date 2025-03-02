@@ -49,7 +49,6 @@ int kvstoreGetNextNonEmptyDictIndex(kvstore *kvs, int didx);
 int kvstoreNumNonEmptyDicts(kvstore *kvs);
 int kvstoreNumAllocatedDicts(kvstore *kvs);
 int kvstoreNumDicts(kvstore *kvs);
-uint64_t kvstoreGetHash(kvstore *kvs, const void *key);
 
 /* kvstore iterator specific functions */
 kvstoreIterator *kvstoreIteratorInit(kvstore *kvs);
@@ -78,21 +77,21 @@ int kvstoreDictExpand(kvstore *kvs, int didx, unsigned long size);
 unsigned long kvstoreDictScanDefrag(kvstore *kvs, int didx, unsigned long v, dictScanFunction *fn, dictDefragFunctions *defragfns, void *privdata);
 typedef dict *(kvstoreDictLUTDefragFunction)(dict *d);
 void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn);
-void *kvstoreDictFetchValue(kvstore *kvs, int didx, const void *key);
 dictEntry *kvstoreDictFind(kvstore *kvs, int didx, void *key);
 dictEntry *kvstoreDictAddRaw(kvstore *kvs, int didx, void *key, dictEntry **existing);
-dictEntry *kvstoreDictTwoPhaseUnlinkFind(kvstore *kvs, int didx, const void *key, dictEntLink *plink, int *table_index);
-void kvstoreDictTwoPhaseUnlinkFree(kvstore *kvs, int didx, dictEntry *he, dictEntLink plink, int table_index);
+dictEntLink kvstoreDictTwoPhaseUnlinkFind(kvstore *kvs, int didx, const void *key, int *table_index);
+void kvstoreDictTwoPhaseUnlinkFree(kvstore *kvs, int didx, dictEntLink plink, int table_index);
 int kvstoreDictDelete(kvstore *kvs, int didx, const void *key);
 kvstoreDictMetadata *kvstoreGetDictMetadata(kvstore *kvs, int didx);
 kvstoreMetadata *kvstoreGetMetadata(kvstore *kvs);
 
 dictEntLink kvstoreDictFindLink(kvstore *kvs, int didx, void *key, dictEntLink *bucket);
-void kvstoreDictSetKeyAtLink(kvstore *kvs, int didx, void *kv, dictEntLink *link, int newItem);
+void kvstoreDictSetAtLink(kvstore *kvs, int didx, void *kv, dictEntLink *link, int newItem);
 
-/* dict with distinct key & value API (no_value=1. Used only by pubsub) */
+/* dict with distinct key & value (no_value=1) currently is used only by pubsub. */
 void kvstoreDictSetKey(kvstore *kvs, int didx, dictEntry* de, void *key);
 void kvstoreDictSetVal(kvstore *kvs, int didx, dictEntry *de, void *val);
+void *kvstoreDictFetchValue(kvstore *kvs, int didx, const void *key);
 
 #ifdef REDIS_TEST
 int kvstoreTest(int argc, char *argv[], int flags);

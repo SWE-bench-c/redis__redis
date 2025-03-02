@@ -38,7 +38,7 @@ typedef enum {
     KEY_DELETED /* The key was deleted now. */
 } keyStatus;
 
-keyStatus expireIfNeeded(redisDb *db, robj *key, kvobj *kv, int flags);
+static keyStatus expireIfNeeded(redisDb *db, robj *key, kvobj *kv, int flags);
 static void dbSetValue(redisDb *db, robj *key, robj **valref, int overwrite, dictEntLink link);
 
 /* Update LFU when an object is accessed.
@@ -258,9 +258,9 @@ kvobj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply) {
 static void dbAddInternal(redisDb *db, robj *key, robj **valref, dictEntLink *bucket) {
     int slot = getKeySlot(key->ptr);
     robj *val = *valref;
-    kvobj *kv = objectSetKeyAndExpire(val, key->ptr, -1);
+    kvobj *kv = kvobjSet(key->ptr, val, -1);
     initObjectLRUOrLFU(kv);
-    kvstoreDictSetKeyAtLink(db->keys, slot, kv, bucket, 1);
+    kvstoreDictSetAtLink(db->keys, slot, kv, bucket, 1);
     signalKeyAsReady(db, key, kv->type);
     notifyKeyspaceEvent(NOTIFY_NEW,"new",key,db->id);
     updateKeysizesHist(db, slot, kv->type, 0, getObjectLength(kv)); /* add hist */
@@ -320,9 +320,9 @@ kvobj *dbAddRDBLoad(redisDb *db, sds key, robj **valref, long long expire) {
 
     robj *val = *valref;
     /* prepare kvobj for insertion. Pass expire to reserve space for it */
-    kvobj *kv = objectSetKeyAndExpire(val, key, -1);
+    kvobj *kv = kvobjSet(key, val, -1);
     initObjectLRUOrLFU(kv);
-    kvstoreDictSetKeyAtLink(db->keys, slot, kv, &bucket, 1);
+    kvstoreDictSetAtLink(db->keys, slot, kv, &bucket, 1);
 
     /* Set the expire time if needed */
     if (expire != -1)
@@ -404,14 +404,14 @@ static void dbSetValue(redisDb *db, robj *key, robj **valref, int overwrite, dic
         val->lru = kvOld->lru;
         /* Update expire reference if needed */
         long long expire = getExpire(db, key->ptr, kvOld);
-        kvNew = objectSetKeyAndExpire(val, key->ptr, expire);
-        kvstoreDictSetKeyAtLink(db->keys, slot, kvNew, &link, 0);
+        kvNew = kvobjSet(key->ptr, val, expire);
+        kvstoreDictSetAtLink(db->keys, slot, kvNew, &link, 0);
 
         /* Replace the old value at its location in the expire space. */
         if (expire >= 0) {
             dictEntLink exLink = kvstoreDictFindLink(db->expires, slot, key->ptr, NULL);
             serverAssertWithInfo(NULL,key,exLink != NULL);
-            kvstoreDictSetKeyAtLink(db->expires, slot, kvNew, &exLink, 0);
+            kvstoreDictSetAtLink(db->expires, slot, kvNew, &exLink, 0);
         }
     }
 
@@ -541,12 +541,13 @@ robj *dbRandomKey(redisDb *db) {
 
 /* Helper for sync and async delete. */
 int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
-    dictEntry **plink;
+    dictEntLink link;
     int table;
     int slot = getKeySlot(key->ptr);
-    dictEntry *de = kvstoreDictTwoPhaseUnlinkFind(db->keys, slot, key->ptr, &plink, &table);
-    if (de) {
-        kvobj *kv = dictGetKV(de);
+    link = kvstoreDictTwoPhaseUnlinkFind(db->keys, slot, key->ptr, &table);
+
+    if (link) {
+        kvobj *kv = dictGetKV(*link);
 
         /* remove key from histogram */
         updateKeysizesHist(db, slot, kv->type, getObjectLength(kv), 0);
@@ -562,22 +563,20 @@ int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
         moduleNotifyKeyUnlink(key,kv,db->id,flags);
         /* We want to try to unblock any module clients or clients using a blocking XREADGROUP */
         signalDeletedKeyAsReady(db,key,kv->type);
+        /* We should call decr before freeObjAsync. If not, the refcount may be
+         * greater than 1, so freeObjAsync doesn't work */
+        decrRefCount(kv);
 
-        /* Deleting an entry from the expires dict will not decrRefCount the kvobj, 
-         * because it is shared with the main dictionary. */
+        /* Delete an entry from the expires dict is not decrRefCount of kvobj */
         kvstoreDictDelete(db->expires, slot, key->ptr);
-
-        /* We must call unlinkFree before freeObjAsync. If not, the refcount 
-         * will be greater than 1, so freeObjAsync doesn't work */
-        kvstoreDictTwoPhaseUnlinkFree(db->keys, slot, de, plink, table); /* refcnt=2->1 */
-
+        
         if (async) {
-            /* Because of dbUnshareStringValue, the val in de may change. */
-            freeObjAsync(key, kv, db->id);
-        } else {
-            decrRefCount(kv); /* refcnt=1->0 */
+            /* Because of dbUnshareStringValue, the val in db may change. */
+            freeObjAsync(key, dictGetKV(*link), db->id);
+            /* Set the key to NULL in the main dictionary. */
+            kvstoreDictSetAtLink(db->keys, slot, NULL, &link, 0);
         }
-
+        kvstoreDictTwoPhaseUnlinkFree(db->keys, slot, link, table);
         return 1;
     } else {
         return 0;
@@ -2110,16 +2109,16 @@ void swapdbCommand(client *c) {
  *  Remove the object from db->expires and set to -1 attached TTL to KV
  */  
 int removeExpire(redisDb *db, robj *key) {
-    dictEntry **plink;
     int table;
     int slot = getKeySlot(key->ptr);
-    dictEntry *de = kvstoreDictTwoPhaseUnlinkFind(db->expires, slot, key->ptr, &plink, &table);
-    if (de == NULL) return 0;
+    dictEntLink link = kvstoreDictTwoPhaseUnlinkFind(db->expires, slot, key->ptr, &table);
 
+    if (link == NULL) return 0;
+    dictEntry *de = *link;
     kvobj *kv = dictGetKV(de);
-    kvobj *newkv = objectSetExpire(kv, -1);
+    kvobj *newkv = kvobjSetExpire(kv, -1);
     serverAssert(newkv == kv);
-    kvstoreDictTwoPhaseUnlinkFree(db->expires, slot, de, plink, table);
+    kvstoreDictTwoPhaseUnlinkFree(db->expires, slot, link, table);
     return 1;
 }
 
@@ -2142,14 +2141,14 @@ kvobj *setExpireByLink(client *c, redisDb *db, sds key, long long when, dictEntL
     }
     kvobj *kv = dictGetKV(*keyLink);
     long long old_when = kvobjGetExpire(kv);
-    kvobj *kvnew = objectSetExpire(kv, when); /* release kv if reallocated */
+    kvobj *kvnew = kvobjSetExpire(kv, when); /* release kv if reallocated */
     if (old_when != -1) { /* old expire */
         /* Val already had an expire field, so it was not reallocated. */
         serverAssert(kv == kvnew);
     } else { /* No old expire */
         /* if kvobj was reallocated, update dict */
         if (kv != kvnew) {
-            kvstoreDictSetKeyAtLink(db->keys, slot, kvnew, &keyLink, 0);
+            kvstoreDictSetAtLink(db->keys, slot, kvnew, &keyLink, 0);
             kv = kvnew;
         }
         /* Now add to expires */
@@ -2281,8 +2280,7 @@ void propagateDeletion(redisDb *db, robj *key, int lazy) {
 
 /* Check if the key is expired
  *
- * You can pass either the key name for a lookup or, to avoid a lookup,
- * directly provide the key-value object to inspect.
+ * Provide either the key name for a lookup. Or KV object to save lookup.
  */
 int keyIsExpired(redisDb *db, sds key, kvobj *kv) {
     /* Don't expire anything while loading. It will be done later. */
