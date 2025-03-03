@@ -99,7 +99,9 @@ static void createGlobalDicts(RedisModuleCtx *ctx, unsigned long count) {
                 RedisModule_DictSet(subdict, str, str);
             }
 
-            RedisModule_DictSet(dict, RedisModule_CreateStringFromULongLong(ctx, j), subdict);
+            RedisModuleString *key = RedisModule_CreateStringFromULongLong(ctx, j);
+            RedisModule_DictSet(dict, key, subdict);
+            RedisModule_FreeString(ctx, key);
         }
         global_dicts[i] = dict;
     }
