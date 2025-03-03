@@ -14010,19 +14010,13 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
                 raxSetData(ri.node, ri.data=newdata);
         }
 
-        /* Check if we need to interrupt defragmentation (leaf node request or timeout) */
+        /* Check if we need to interrupt defragmentation.
+         * - For explicit interruption, use current position
+         * - For timeout interruption, try to advance to next node if possible */
         if (ret == 1 || RM_DefragShouldStop(ctx)) {
-            if (*seekTo) {
-                RM_FreeString(NULL, *seekTo);
-                *seekTo = NULL;
-            }
-
-             /* Save position for resuming later:
-              * - For explicit interruption, use current position
-              * - For timeout interruption, try to advance to next node if possible */
-            if (ret == 1 || raxNext(&ri))
-                *seekTo = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
-
+            if (ret == 0 && !raxNext(&ri)) goto cleanup; /* Last node and no more work needed. */
+            if (*seekTo) RM_FreeString(NULL, *seekTo);
+            *seekTo = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
             raxStop(&ri);
             return newdict;
         }
