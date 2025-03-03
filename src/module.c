@@ -13959,8 +13959,9 @@ int moduleDefragRaxNode(raxNode **noderef) {
 /* Defragment a Redis Module Dictionary by scanning its contents and calling a value
  * callback for each value.
  *
- * The callback gets the current value in the dict, and should return non-NULL with a new pointer,
+ * The callback gets the current value in the dict, and should update newptr to the new pointer,
  * if the value was re-allocated to a different address. The callback also gets the key name just as a reference.
+ * The callback returns 0 when defrag is complete for this item, 1 when node needs more work.
  *
  * The API can work incrementally by accepting a seek position to continue from, and
  * returning the next position to seek to on the next call (or return NULL when the iteration is completed).
