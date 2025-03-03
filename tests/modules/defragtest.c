@@ -86,6 +86,9 @@ static void createGlobalDicts(RedisModuleCtx *ctx, unsigned long count) {
     global_dicts_len = count;
     global_dicts = RedisModule_Alloc(sizeof(RedisModuleDict *) * count);
 
+    /* Create some nested dictionaries:
+     * - Each main dict contains some subdicts.
+     * - Each sub-dict contains some strings. */
     for (unsigned long i = 0; i < count; i++) {
         RedisModuleDict *dict = RedisModule_CreateDict(ctx);
         for (unsigned long j = 0; j < 10; j++) {
@@ -166,6 +169,7 @@ static int defragGlobalDictValueCB(RedisModuleDefragCtx *ctx, void *data, unsign
 
     *newptr = RedisModule_DefragRedisModuleDict(ctx, subdict, defragGlobalSubDictValueCB, &seekTo);
     if (*newptr) global_dicts_items_defragged++;
+    /* Return 1 if seekTo is not NULL, indicating this node needs more defrag work. */
     return seekTo != NULL;
 }
 
