@@ -13983,13 +13983,15 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
 
     raxStart(&ri,dict->rax);
     if (*seekTo == NULL) {
+        /* if last seek is NULL, we start new iteration */
+        moduleDefragRaxNode(&dict->rax->head);
         /* assign the iterator node callback before the seek, so that the
          * initial nodes that are processed till the first item are covered */
         ri.node_cb = moduleDefragRaxNode;
         raxSeek(&ri,"^",NULL,0);
     } else {
-        /* if cursor is non-zero, we seek to the static 'last' */
-        if (!raxSeek(&ri,">", (*seekTo)->ptr, sdslen((*seekTo)->ptr))) {
+        /* Seek to the static 'seekTo'. */
+        if (!raxSeek(&ri,">=", (*seekTo)->ptr, sdslen((*seekTo)->ptr))) {
             goto cleanup;
         }
         /* assign the iterator node callback after the seek, so that the
@@ -13998,14 +14000,28 @@ RedisModuleDict *RM_DefragRedisModuleDict(RedisModuleDefragCtx *ctx, RedisModule
     }
 
     while (raxNext(&ri)) {
+        int ret = 0;
+        void *newdata = NULL;
+
         if (valueCB) {
-            void *newdata = valueCB(ctx, ri.data, ri.key, ri.key_len);
+            ret = valueCB(ctx, ri.data, ri.key, ri.key_len, &newdata);
             if (newdata)
                 raxSetData(ri.node, ri.data=newdata);
         }
-        if (RM_DefragShouldStop(ctx)) {
-            if (*seekTo) RM_FreeString(NULL, *seekTo);
-            *seekTo = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
+
+        /* Check if we need to interrupt defragmentation (leaf node request or timeout) */
+        if (ret == 1 || RM_DefragShouldStop(ctx)) {
+            if (*seekTo) {
+                RM_FreeString(NULL, *seekTo);
+                *seekTo = NULL;
+            }
+
+             /* Save position for resuming later:
+              * - For explicit interruption, use current position
+              * - For timeout interruption, try to advance to next node if possible */
+            if (ret == 1 || raxNext(&ri))
+                *seekTo = RM_CreateString(NULL, (const char *)ri.key, ri.key_len);
+
             raxStop(&ri);
             return newdict;
         }
