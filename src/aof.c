@@ -1725,6 +1725,9 @@ cleanup:
     server.current_client = old_cur_client;
     server.executing_client = old_exec_client;
     fclose(fp);
+    /* Reclaim page cache memory used by the AOF file in background. */
+    int fd = open(aof_filepath, O_RDONLY);
+    if (fd >= 0) bioCreateCloseJob(fd, 0, 1);
     sdsfree(aof_filepath);
     return ret;
 }
