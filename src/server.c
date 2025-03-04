@@ -2884,6 +2884,7 @@ void initServer(void) {
 
     if (server.maxmemory_clients != 0)
         initServerClientMemUsageBuckets();
+    server.is_evicting_clients = 0;
 }
 
 void initListeners(void) {
