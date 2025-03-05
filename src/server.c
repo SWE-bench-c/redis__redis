@@ -302,6 +302,31 @@ int dictSdsKeyCompareWithLen(dict *d, const void *key1, const size_t l1,
     return memcmp(key1, key2, l1) == 0;
 }
 
+static uint64_t dictHashKV(const void *kv) {
+    sds sdsKey = kvobjGetKey((kvobj *) kv);
+    return dictGenHashFunction(sdsKey, sdslen(sdsKey));
+}
+
+int dictCompareKV(dict *d, const void *kv1, const void *kv2)
+{ 
+    sds key1 = kvobjGetKey((kvobj *) kv1);
+    sds key2 = kvobjGetKey((kvobj *) kv2);
+    return dictSdsKeyCompare(d, key1, key2);
+}
+
+int dictSdsCompareKV(dict *d, const void *sdsLookup, const void *kv)
+{
+    sds key = kvobjGetKey((kvobj *)kv);
+    serverAssert(((kvobj *)kv)->iskvobj);
+    return dictSdsKeyCompare(d, (sds)sdsLookup, key);
+}
+
+static void dictDestructorKV(dict *d, void *kv) {
+    UNUSED(d);
+    if (kv == NULL) return;
+    decrRefCount(kv);
+}
+
 int dictSdsKeyCompare(dict *d, const void *key1,
         const void *key2)
 {
@@ -517,17 +542,19 @@ dictType zsetDictType = {
     NULL,                      /* allow to expand */
 };
 
-/* Db->dict, keys are sds strings, vals are Redis objects. */
+/* Db->dict, keys are of type kvobj, unification of key and value */
 dictType dbDictType = {
-    dictSdsHash,                /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictSdsKeyCompare,          /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    dictObjectDestructor,       /* val destructor */
-    dictResizeAllowed,          /* allow to resize */
-    .keyLen = dictSdsKeyLen,    /* key length */
-    .keyCompareWithLen = dictSdsKeyCompareWithLen /* key compare with length */
+    dictSdsHash,            /* hash function */
+    NULL,                   /* key dup */
+    NULL,                   /* val dup */
+    dictSdsCompareKV,       /* lookup key compare */
+    dictDestructorKV,       /* key destructor */
+    NULL,                   /* val destructor */
+    dictResizeAllowed,      /* allow to resize */
+    .no_value = 1,          /* keys and values are unified (kvobj) */
+    .keys_are_odd = 0,      /* simple kvobj (robj) struct */
+    .storedHashFunction = dictHashKV,  /* stored hash function */
+    .storedKeyCompare = dictCompareKV, /* stored key compare */            
 };
 
 /* Db->expires */
@@ -535,10 +562,14 @@ dictType dbExpiresDictType = {
     dictSdsHash,                /* hash function */
     NULL,                       /* key dup */
     NULL,                       /* val dup */
-    dictSdsKeyCompare,          /* key compare */
+    dictSdsCompareKV,           /* key compare */
     NULL,                       /* key destructor */
     NULL,                       /* val destructor */
     dictResizeAllowed,          /* allow to resize */
+    .no_value = 1,              /* keys and values are unified (kvobj) */
+    .keys_are_odd = 0,          /* simple kvobj (robj) struct */
+    .storedHashFunction = dictHashKV,  /* stored hash function */
+    .storedKeyCompare = dictCompareKV, /* stored key compare */
 };
 
 /* Command table. sds string -> command struct pointer. */

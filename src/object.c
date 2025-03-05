@@ -2,6 +2,9 @@
  *
  * Copyright (c) 2009-Present, Redis Ltd.
  * All rights reserved.
+ * 
+ * Copyright (c) 2024-present, Valkey contributors.
+ * All rights reserved.
  *
  * Licensed under your choice of the Redis Source Available License 2.0
  * (RSALv2) or the Server Side Public License v1 (SSPLv1).
@@ -17,16 +20,67 @@
 #define strtold(a,b) ((long double)strtod((a),(b)))
 #endif
 
+/* For objects with large embedded keys, we reserve space for an expire field,
+ * so if expire is set later, we don't need to reallocate the object. */
+#define KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD 128
+
 /* ===================== Creation and parsing of objects ==================== */
 
-robj *createObject(int type, void *ptr) {
-    robj *o = zmalloc(sizeof(*o));
+/* Creates an object, optionally with embedded key and expire fields. The key
+ * and expire fields can be omitted by passing NULL and -1, respectively. */
+kvobj *kvobjCreate(int type, const sds key, void *valptr, long long expire) {
+    /* Calculate sizes */
+    int has_expire = (expire != -1 ||
+                      (key != NULL && sdslen(key) >= KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD));
+    size_t key_sds_size = 0;
+    size_t min_size = sizeof(kvobj);
+    
+    if (has_expire) min_size += sizeof(long long);   
+
+    if (key != NULL) {
+        /* Size of embedded key, incl. 1 byte for prefixed sds hdr size. */
+        key_sds_size = sdscopytobuffer(NULL, 0, key, NULL);
+        min_size += 1 + key_sds_size;
+    }
+    
+    /* Allocate and set the declared fields. */
+    size_t bufsize = 0;
+    robj *o = zmalloc_usable(min_size, &bufsize);
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
-    o->ptr = ptr;
+    o->ptr = valptr;
     o->refcount = 1;
     o->lru = 0;
+    o->iskvobj = (key != NULL);
+
+    /* If the allocation has enough space for an expire field, add it even if we
+     * don't need it now. Then we don't need to realloc if it's needed later. */
+    if (key != NULL && !has_expire && bufsize >= min_size + sizeof(long long)) {
+        has_expire = 1;
+        min_size += sizeof(long long);
+    }
+    o->expirable = has_expire;
+
+    /* The memory after the struct where we embedded data. */
+    unsigned char *data = (void *)(o + 1);
+
+    /* Set the expire field. */
+    if (o->expirable) {
+        *(long long *)data = expire;
+        data += sizeof(long long);
+    }
+
+    /* Copy embedded key. */
+    if (o->iskvobj) {
+        sdscopytobuffer(data + 1, key_sds_size, key, data);
+        data += 1 + key_sds_size;
+    }
+
     return o;
+}
+
+robj *createObject(int type, void *valptr) {
+    return kvobjCreate(type, NULL, valptr, -1);
 }
 
 void initObjectLRUOrLFU(robj *o) {
@@ -65,31 +119,172 @@ robj *createRawStringObject(const char *ptr, size_t len) {
     return createObject(OBJ_STRING, sdsnewlen(ptr,len));
 }
 
+/* Creates a new embedded string object and copies the content of key, val and
+ * expire to the new object. LRU is set to 0. */
+static kvobj *kvobjCreateEmbedString(const char *val_ptr,
+                                               size_t val_len,
+                                               const sds key,
+                                               long long expire)
+{
+    /* Calculate sizes */
+    size_t key_sds_size = 0;
+    size_t min_size = sizeof(kvobj);
+    if (expire != -1) {
+        min_size += sizeof(long long);
+    }
+    if (key != NULL) {  
+        /* Size of embedded key, incl. 1 byte for prefixed sds hdr size. */
+        key_sds_size = sdscopytobuffer(NULL, 0, key, NULL);
+        min_size += 1 + key_sds_size;
+    }
+    /* Size of embedded value (EMBSTR) including \0 term. */
+    min_size += sizeof(struct sdshdr8) + val_len + 1;
+
+    /* Allocate and set the declared fields. */
+    size_t bufsize = 0;
+    robj *o = zmalloc_usable(min_size, &bufsize);
+    o->type = OBJ_STRING;
+    o->encoding = OBJ_ENCODING_EMBSTR;
+    o->refcount = 1;
+    o->lru = 0;
+    o->expirable = (expire != -1);
+    o->iskvobj = (key != NULL);
+
+    /* If the allocation has enough space for an expire field, add it even if we
+     * don't need it now. Then we don't need to realloc if it's needed later. */
+    if (!o->expirable && bufsize >= min_size + sizeof(long long)) {
+        o->expirable = 1;
+        min_size += sizeof(long long);
+    }
+
+    /* The memory after the struct where we embedded data. */
+    unsigned char *data = (void *)(o + 1);
+
+    /* Set the expire field. */
+    if (o->expirable) {
+        *(long long *)data = expire;
+        data += sizeof(long long);
+    }
+
+    /* Copy embedded key. */
+    if (o->iskvobj) {
+        sdscopytobuffer(data + 1, key_sds_size, key, data);
+        data += 1 + key_sds_size;
+    }
+
+    /* Copy embedded value (EMBSTR). */
+    struct sdshdr8 *sh = (void *)data;
+    sh->flags = SDS_TYPE_8;
+    sh->len = val_len;
+    size_t capacity = bufsize - (min_size - val_len);
+    sh->alloc = capacity;
+    serverAssert(capacity == sh->alloc); /* Overflow check. */
+    if (val_ptr == SDS_NOINIT) {
+        sh->buf[val_len] = '\0';
+    } else if (val_ptr != NULL) {
+        memcpy(sh->buf, val_ptr, val_len);
+        sh->buf[val_len] = '\0';
+    } else {
+        memset(sh->buf, 0, val_len + 1);
+    }
+    o->ptr = sh->buf;
+
+    return o;
+}
+
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
-    robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
-    struct sdshdr8 *sh = (void*)(o+1);
+    return kvobjCreateEmbedString(ptr, len, NULL, -1);
+}
 
-    o->type = OBJ_STRING;
-    o->encoding = OBJ_ENCODING_EMBSTR;
-    o->ptr = sh+1;
-    o->refcount = 1;
-    o->lru = 0;
-
-    sh->len = len;
-    sh->alloc = len;
-    sh->flags = SDS_TYPE_8;
-    if (ptr == SDS_NOINIT)
-        sh->buf[len] = '\0';
-    else if (ptr) {
-        memcpy(sh->buf,ptr,len);
-        sh->buf[len] = '\0';
-    } else {
-        memset(sh->buf,0,len+1);
+sds kvobjGetKey(const kvobj *kv) {
+    unsigned char *data = (void *)(kv + 1);
+    if (kv->expirable) {
+        /* Skip expire field */
+        data += sizeof(long long);
     }
-    return o;
+    if (kv->iskvobj) {
+        uint8_t hdr_size = *(uint8_t *)data;
+        data += 1 + hdr_size;
+        return (sds)data;
+    }
+    return NULL;
+}
+
+long long kvobjGetExpire(const kvobj *kv) {
+    unsigned char *data = (void *)(kv + 1);
+    if (kv->expirable) {
+        return *(long long *)data;
+    } else {
+        return -1;
+    }
+}
+
+/* This functions may reallocate the value. The new allocation is returned and
+ * the old object's reference counter is decremented and possibly freed. Use the
+ * returned object instead of 'val' after calling this function. */
+kvobj *kvobjSetExpire(kvobj *kv, long long expire) {
+    if (kv->expirable) {
+        /* Update existing expire field. */
+        unsigned char *data = (void *)(kv + 1);
+        *(long long *)data = expire;
+        return kv;
+    } else if (expire == -1) {
+        return kv;
+    } else {
+        return kvobjSet(kvobjGetKey(kv), kv, expire);
+    }
+}
+
+/* This functions may reallocate the value. The new allocation is returned and
+ * the old object's reference counter is decremented and possibly freed. Use the
+ * returned object instead of 'val' after calling this function. */
+kvobj *kvobjSet(sds key, robj *val, long long expire) {
+    if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_EMBSTR) {
+        kvobj *kv;
+        size_t len = sdslen(val->ptr);
+
+        /* Embed when the sum is up to 64 bytes. */
+        size_t size = sizeof(kvobj);
+        size += (key != NULL) * (sdslen(key) + 3); /* hdr size (1) + hdr (1) + nullterm (1) */
+        size += (expire != -1) * sizeof(long long);
+        size += 4 + len; /* embstr header (3) + nullterm (1) */
+        if (size <= CACHE_LINE_SIZE) {
+            kv = kvobjCreateEmbedString(val->ptr, len, key, expire);
+        } else {
+            kv = kvobjCreate(OBJ_STRING, key, sdsnewlen(val->ptr, len), expire);
+        }
+
+        kv->lru = val->lru;
+        decrRefCount(val);
+        return kv;
+    }
+
+    /* Create a new object with embedded key. Reuse ptr if possible. */
+    void *valptr;
+    if (val->refcount == 1) {
+        /* Reuse the ptr. There are no other references to val. */
+        valptr = val->ptr;
+        val->ptr = NULL;
+    } else if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_INT) {
+        /* The pointer is not allocated memory. We can just copy the pointer. */
+        valptr = val->ptr;
+    } else if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_RAW) {
+        /* Dup the string. */
+        valptr = sdsdup(val->ptr);
+    } else {
+        serverAssert(val->type != OBJ_STRING);
+        /* There are multiple references to this non-string object. Most types
+         * can be duplicated, but for a module type is not always possible. */
+        serverPanic("Not implemented");
+    }
+    robj *new = kvobjCreate(val->type, key, valptr, expire);
+    new->encoding = val->encoding;
+    new->lru = val->lru;
+    decrRefCount(val);
+    return new;
 }
 
 /* Create a string object with EMBSTR encoding if it is smaller than
@@ -150,18 +345,10 @@ robj *createStringObjectFromLongLong(long long value) {
     return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_AUTO);
 }
 
-/* The function avoids returning a shared integer when LFU/LRU info
- * are needed, that is, when the object is used as a value in the key
- * space(for instance when the INCR command is used), and Redis is
- * configured to evict based on LFU/LRU, so we want LFU/LRU values
- * specific for each key. */
+/* The function doesn't return a shared integer when the object is used as a
+ * value in the key space (for instance when the INCR command is used). */
 robj *createStringObjectFromLongLongForValue(long long value) {
-    if (server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) {
-        /* If the maxmemory policy permits, we can still return shared integers */
-        return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_AUTO);
-    } else {
-        return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_NO_SHARED);
-    }
+    return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_NO_SHARED);
 }
 
 /* Create a string object that contains an sds inside it. That means it can't be
@@ -360,16 +547,19 @@ void incrRefCount(robj *o) {
 
 void decrRefCount(robj *o) {
     if (o->refcount == 1) {
-        switch(o->type) {
-        case OBJ_STRING: freeStringObject(o); break;
-        case OBJ_LIST: freeListObject(o); break;
-        case OBJ_SET: freeSetObject(o); break;
-        case OBJ_ZSET: freeZsetObject(o); break;
-        case OBJ_HASH: freeHashObject(o); break;
-        case OBJ_MODULE: freeModuleObject(o); break;
-        case OBJ_STREAM: freeStreamObject(o); break;
-        default: serverPanic("Unknown object type"); break;
+        if (o->ptr != NULL) {
+            switch(o->type) {
+            case OBJ_STRING: freeStringObject(o); break;
+            case OBJ_LIST: freeListObject(o); break;
+            case OBJ_SET: freeSetObject(o); break;
+            case OBJ_ZSET: freeZsetObject(o); break;
+            case OBJ_HASH: freeHashObject(o); break;
+            case OBJ_MODULE: freeModuleObject(o); break;
+            case OBJ_STREAM: freeStreamObject(o); break;
+            default: serverPanic("Unknown object type"); break;
+            }
         }
+        o->refcount = 0; /* Try to catch use after free */
         zfree(o);
     } else {
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
@@ -555,13 +745,6 @@ void dismissObject(robj *o, size_t size_hint) {
 #endif
 }
 
-/* This variant of decrRefCount() gets its argument as void, and is useful
- * as free method in data structures that expect a 'void free_object(void*)'
- * prototype for the free method. */
-void decrRefCountVoid(void *o) {
-    decrRefCount(o);
-}
-
 int checkType(client *c, robj *o, int type) {
     /* A NULL is considered an empty key */
     if (o && o->type != type) {
@@ -630,27 +813,15 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
      * representable as a 32 nor 64 bit integer. */
     len = sdslen(s);
     if (len <= 20 && string2l(s,len,&value)) {
-        /* This object is encodable as a long. Try to use a shared object.
-         * Note that we avoid using shared integers when maxmemory is used
-         * because every object needs to have a private LRU field for the LRU
-         * algorithm to work well. */
-        if ((server.maxmemory == 0 ||
-            !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) &&
-            value >= 0 &&
-            value < OBJ_SHARED_INTEGERS)
-        {
+        /* This object is encodable as a long. */        
+        if (o->encoding == OBJ_ENCODING_RAW) {
+            sdsfree(o->ptr);
+            o->encoding = OBJ_ENCODING_INT;
+            o->ptr = (void*) value;
+            return o;
+        } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
             decrRefCount(o);
-            return shared.integers[value];
-        } else {
-            if (o->encoding == OBJ_ENCODING_RAW) {
-                sdsfree(o->ptr);
-                o->encoding = OBJ_ENCODING_INT;
-                o->ptr = (void*) value;
-                return o;
-            } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
-                decrRefCount(o);
-                return createStringObjectFromLongLongForValue(value);
-            }
+            return createStringObjectFromLongLongForValue(value);
         }
     }
 
@@ -1023,7 +1194,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             asize = sizeof(*o)+sizeof(dict)+(sizeof(struct dictEntry*)*dictBuckets(d));
             while((de = dictNext(di)) != NULL && samples < sample_size) {
                 sds ele = dictGetKey(de);
-                elesize += dictEntryMemUsage() + sdsZmallocSize(ele);
+                elesize += dictEntryMemUsage(0) + sdsZmallocSize(ele);
                 samples++;
             }
             dictReleaseIterator(di);
@@ -1047,7 +1218,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
                     zmalloc_size(zsl->header);
             while(znode != NULL && samples < sample_size) {
                 elesize += sdsZmallocSize(znode->ele);
-                elesize += dictEntryMemUsage()+zmalloc_size(znode);
+                elesize += dictEntryMemUsage(1)+zmalloc_size(znode);
                 samples++;
                 znode = znode->level[0].forward;
             }
@@ -1069,7 +1240,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
                 hfield ele = dictGetKey(de);
                 sds ele2 = dictGetVal(de);
                 elesize += hfieldZmallocSize(ele) + sdsZmallocSize(ele2);
-                elesize += dictEntryMemUsage();
+                elesize += dictEntryMemUsage(0);
                 samples++;
             }
             dictReleaseIterator(di);
@@ -1447,20 +1618,20 @@ int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle,
 
 /* This is a helper function for the OBJECT command. We need to lookup keys
  * without any modification of LRU or other parameters. */
-robj *objectCommandLookup(client *c, robj *key) {
+kvobj *kvobjCommandLookup(client *c, robj *key) {
     return lookupKeyReadWithFlags(c->db,key,LOOKUP_NOTOUCH|LOOKUP_NONOTIFY);
 }
 
-robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
-    robj *o = objectCommandLookup(c,key);
-    if (!o) addReplyOrErrorObject(c, reply);
-    return o;
+kvobj *kvobjCommandLookupOrReply(client *c, robj *key, robj *reply) {
+    kvobj *kv = kvobjCommandLookup(c,key);
+    if (!kv) addReplyOrErrorObject(c, reply);
+    return kv;
 }
 
 /* Object command allows to inspect the internals of a Redis Object.
  * Usage: OBJECT <refcount|encoding|idletime|freq> <key> */
 void objectCommand(client *c) {
-    robj *o;
+    kvobj *kv;
 
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"help")) {
         const char *help[] = {
@@ -1480,23 +1651,23 @@ NULL
         };
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr,"refcount") && c->argc == 3) {
-        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
-        addReplyLongLong(c,o->refcount);
+        addReplyLongLong(c, kv->refcount);
     } else if (!strcasecmp(c->argv[1]->ptr,"encoding") && c->argc == 3) {
-        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
-        addReplyBulkCString(c,strEncoding(o->encoding));
+        addReplyBulkCString(c,strEncoding(kv->encoding));
     } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) {
-        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
         if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
             addReplyError(c,"An LFU maxmemory policy is selected, idle time not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
             return;
         }
-        addReplyLongLong(c,estimateObjectIdleTime(o)/1000);
+        addReplyLongLong(c, estimateObjectIdleTime(kv) / 1000);
     } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
-        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+        if ((kv = kvobjCommandLookupOrReply(c, c->argv[2], shared.null[c->resp]))
                 == NULL) return;
         if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) {
             addReplyError(c,"An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
@@ -1506,7 +1677,7 @@ NULL
          * in case of the key has not been accessed for a long time,
          * because we update the access time only
          * when the key is read or overwritten. */
-        addReplyLongLong(c,LFUDecrAndReturn(o));
+        addReplyLongLong(c,LFUDecrAndReturn(kv));
     } else {
         addReplySubcommandSyntaxError(c);
     }
@@ -1534,7 +1705,7 @@ NULL
         };
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr,"usage") && c->argc >= 3) {
-        dictEntry *de;
+        kvobj *kv;
         long long samples = OBJ_COMPUTE_SIZE_DEF_SAMPLES;
         for (int j = 3; j < c->argc; j++) {
             if (!strcasecmp(c->argv[j]->ptr,"samples") &&
@@ -1553,13 +1724,12 @@ NULL
                 return;
             }
         }
-        if ((de = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
+        if ((kv = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
             addReplyNull(c);
             return;
         }
-        size_t usage = objectComputeSize(c->argv[2],dictGetVal(de),samples,c->db->id);
-        usage += sdsZmallocSize(dictGetKey(de));
-        usage += dictEntryMemUsage();
+        size_t usage = objectComputeSize(c->argv[2], (robj *)kv,samples,c->db->id);
+        usage += dictEntryMemUsage(1);
         addReplyLongLong(c,usage);
     } else if (!strcasecmp(c->argv[1]->ptr,"stats") && c->argc == 2) {
         struct redisMemOverhead *mh = getMemoryOverheadData();

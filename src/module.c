@@ -175,7 +175,7 @@ struct RedisModuleKey {
     RedisModuleCtx *ctx;
     redisDb *db;
     robj *key;      /* Key name object. */
-    robj *value;    /* Value object, or NULL if the key was not found. */
+    kvobj *kv;      /* Key-Value object, or NULL if the key was not found. */
     void *iter;     /* Iterator. */
     int mode;       /* Opening mode. */
 
@@ -695,7 +695,7 @@ int moduleCreateEmptyKey(RedisModuleKey *key, int type) {
     robj *obj;
 
     /* The key must be open for writing and non existing to proceed. */
-    if (!(key->mode & REDISMODULE_WRITE) || key->value)
+    if (!(key->mode & REDISMODULE_WRITE) || key->kv)
         return REDISMODULE_ERR;
 
     switch(type) {
@@ -713,8 +713,8 @@ int moduleCreateEmptyKey(RedisModuleKey *key, int type) {
         break;
     default: return REDISMODULE_ERR;
     }
-    dbAdd(key->db,key->key,obj);
-    key->value = obj;
+    
+    key->kv = dbAdd(key->db, key->key, &obj);
     moduleInitKeyTypeSpecific(key);
     return REDISMODULE_OK;
 }
@@ -722,7 +722,7 @@ int moduleCreateEmptyKey(RedisModuleKey *key, int type) {
 /* Frees key->iter and sets it to NULL. */
 static void moduleFreeKeyIterator(RedisModuleKey *key) {
     serverAssert(key->iter != NULL);
-    switch (key->value->type) {
+    switch (key->kv->type) {
     case OBJ_LIST: listTypeReleaseIterator(key->iter); break;
     case OBJ_STREAM:
         streamIteratorStop(key->iter);
@@ -737,7 +737,7 @@ static void moduleFreeKeyIterator(RedisModuleKey *key) {
  * Frees list iterator and sets it to NULL. */
 static void moduleFreeListIterator(void *data) {
     RedisModuleKey *key = (RedisModuleKey*)data;
-    serverAssert(key->value->type == OBJ_LIST);
+    serverAssert(key->kv->type == OBJ_LIST);
     if (key->iter) moduleFreeKeyIterator(key);
 }
 
@@ -752,9 +752,9 @@ static void moduleFreeListIterator(void *data) {
  * The function returns 1 if the key value object is found empty and is
  * deleted, otherwise 0 is returned. */
 int moduleDelKeyIfEmpty(RedisModuleKey *key) {
-    if (!(key->mode & REDISMODULE_WRITE) || key->value == NULL) return 0;
+    if (!(key->mode & REDISMODULE_WRITE) || key->kv == NULL) return 0;
     int isempty;
-    robj *o = key->value;
+    robj *o = key->kv;
 
     switch(o->type) {
     case OBJ_LIST: isempty = listTypeLength(o) == 0; break;
@@ -768,7 +768,7 @@ int moduleDelKeyIfEmpty(RedisModuleKey *key) {
     if (isempty) {
         if (key->iter) moduleFreeKeyIterator(key);
         dbDelete(key->db,key->key);
-        key->value = NULL;
+        key->kv = NULL;
         return 1;
     } else {
         return 0;
@@ -4060,25 +4060,25 @@ int RM_SelectDb(RedisModuleCtx *ctx, int newid) {
  * calling RM_CloseKey on the opened key.
  */
 int RM_KeyExists(RedisModuleCtx *ctx, robj *keyname) {
-    robj *value = lookupKeyReadWithFlags(ctx->client->db, keyname, LOOKUP_NOTOUCH);
-    return (value != NULL);
+    kvobj *kv = lookupKeyReadWithFlags(ctx->client->db, keyname, LOOKUP_NOTOUCH);
+    return (kv != NULL);
 }
 
 /* Initialize a RedisModuleKey struct */
-static void moduleInitKey(RedisModuleKey *kp, RedisModuleCtx *ctx, robj *keyname, robj *value, int mode){
+static void moduleInitKey(RedisModuleKey *kp, RedisModuleCtx *ctx, robj *keyname, kvobj *kv, int mode){
     kp->ctx = ctx;
     kp->db = ctx->client->db;
     kp->key = keyname;
     incrRefCount(keyname);
-    kp->value = value;
+    kp->kv = kv;
     kp->iter = NULL;
     kp->mode = mode;
-    if (kp->value) moduleInitKeyTypeSpecific(kp);
+    if (kp->kv) moduleInitKeyTypeSpecific(kp);
 }
 
 /* Initialize the type-specific part of the key. Only when key has a value. */
 static void moduleInitKeyTypeSpecific(RedisModuleKey *key) {
-    switch (key->value->type) {
+    switch (key->kv->type) {
     case OBJ_ZSET: zsetKeyReset(key); break;
     case OBJ_STREAM: key->u.stream.signalready = 0; break;
     }
@@ -4108,7 +4108,7 @@ static void moduleInitKeyTypeSpecific(RedisModuleKey *key) {
  * * REDISMODULE_OPEN_KEY_ACCESS_EXPIRED - Access expired keys that have not yet been deleted */
 RedisModuleKey *RM_OpenKey(RedisModuleCtx *ctx, robj *keyname, int mode) {
     RedisModuleKey *kp;
-    robj *value;
+    kvobj *kv;
     int flags = 0;
     flags |= (mode & REDISMODULE_OPEN_KEY_NOTOUCH? LOOKUP_NOTOUCH: 0);
     flags |= (mode & REDISMODULE_OPEN_KEY_NONOTIFY? LOOKUP_NONOTIFY: 0);
@@ -4118,17 +4118,17 @@ RedisModuleKey *RM_OpenKey(RedisModuleCtx *ctx, robj *keyname, int mode) {
     flags |= (mode & REDISMODULE_OPEN_KEY_ACCESS_EXPIRED ? (LOOKUP_ACCESS_EXPIRED) : 0);
 
     if (mode & REDISMODULE_WRITE) {
-        value = lookupKeyWriteWithFlags(ctx->client->db,keyname, flags);
+        kv = lookupKeyWriteWithFlags(ctx->client->db,keyname, flags);
     } else {
-        value = lookupKeyReadWithFlags(ctx->client->db,keyname, flags);
-        if (value == NULL) {
+        kv = lookupKeyReadWithFlags(ctx->client->db,keyname, flags);
+        if (kv == NULL) {
             return NULL;
         }
     }
 
     /* Setup the key handle. */
     kp = zmalloc(sizeof(*kp));
-    moduleInitKey(kp, ctx, keyname, value, mode);
+    moduleInitKey(kp, ctx, keyname, kv, mode);
     autoMemoryAdd(ctx,REDISMODULE_AM_KEY,kp);
     return kp;
 }
@@ -4155,9 +4155,9 @@ static void moduleCloseKey(RedisModuleKey *key) {
     int signal = SHOULD_SIGNAL_MODIFIED_KEYS(key->ctx);
     if ((key->mode & REDISMODULE_WRITE) && signal)
         signalModifiedKey(key->ctx->client,key->db,key->key);
-    if (key->value) {
+    if (key->kv) {
         if (key->iter) moduleFreeKeyIterator(key);
-        switch (key->value->type) {
+        switch (key->kv->type) {
         case OBJ_ZSET:
             RM_ZsetRangeStop(key);
             break;
@@ -4183,10 +4183,10 @@ void RM_CloseKey(RedisModuleKey *key) {
 /* Return the type of the key. If the key pointer is NULL then
  * REDISMODULE_KEYTYPE_EMPTY is returned. */
 int RM_KeyType(RedisModuleKey *key) {
-    if (key == NULL || key->value ==  NULL) return REDISMODULE_KEYTYPE_EMPTY;
+    if (key == NULL || key->kv ==  NULL) return REDISMODULE_KEYTYPE_EMPTY;
     /* We map between defines so that we are free to change the internal
      * defines as desired. */
-    switch(key->value->type) {
+    switch(key->kv->type) {
     case OBJ_STRING: return REDISMODULE_KEYTYPE_STRING;
     case OBJ_LIST: return REDISMODULE_KEYTYPE_LIST;
     case OBJ_SET: return REDISMODULE_KEYTYPE_SET;
@@ -4204,8 +4204,8 @@ int RM_KeyType(RedisModuleKey *key) {
  *
  * If the key pointer is NULL or the key is empty, zero is returned. */
 size_t RM_ValueLength(RedisModuleKey *key) {
-    if (key == NULL || key->value == NULL) return 0;
-    return getObjectLength(key->value);
+    if (key == NULL || key->kv == NULL) return 0;
+    return getObjectLength(key->kv);
 }
 
 /* If the key is open for writing, remove it, and setup the key to
@@ -4214,9 +4214,9 @@ size_t RM_ValueLength(RedisModuleKey *key) {
  * writing REDISMODULE_ERR is returned. */
 int RM_DeleteKey(RedisModuleKey *key) {
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value) {
+    if (key->kv) {
         dbDelete(key->db,key->key);
-        key->value = NULL;
+        key->kv = NULL;
     }
     return REDISMODULE_OK;
 }
@@ -4228,9 +4228,9 @@ int RM_DeleteKey(RedisModuleKey *key) {
  * writing REDISMODULE_ERR is returned. */
 int RM_UnlinkKey(RedisModuleKey *key) {
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value) {
+    if (key->kv) {
         dbAsyncDelete(key->db,key->key);
-        key->value = NULL;
+        key->kv = NULL;
     }
     return REDISMODULE_OK;
 }
@@ -4239,8 +4239,8 @@ int RM_UnlinkKey(RedisModuleKey *key) {
  * If no TTL is associated with the key or if the key is empty,
  * REDISMODULE_NO_EXPIRE is returned. */
 mstime_t RM_GetExpire(RedisModuleKey *key) {
-    mstime_t expire = getExpire(key->db,key->key);
-    if (expire == -1 || key->value == NULL)
+    mstime_t expire = kvobjGetExpire(key->kv);
+    if (expire == -1 || key->kv == NULL)
         return REDISMODULE_NO_EXPIRE;
     expire -= commandTimeSnapshot();
     return expire >= 0 ? expire : 0;
@@ -4256,7 +4256,7 @@ mstime_t RM_GetExpire(RedisModuleKey *key) {
  * The function returns REDISMODULE_OK on success or REDISMODULE_ERR if
  * the key was not open for writing or is an empty key. */
 int RM_SetExpire(RedisModuleKey *key, mstime_t expire) {
-    if (!(key->mode & REDISMODULE_WRITE) || key->value == NULL || (expire < 0 && expire != REDISMODULE_NO_EXPIRE))
+    if (!(key->mode & REDISMODULE_WRITE) || key->kv == NULL || (expire < 0 && expire != REDISMODULE_NO_EXPIRE))
         return REDISMODULE_ERR;
     if (expire != REDISMODULE_NO_EXPIRE) {
         expire += commandTimeSnapshot();
@@ -4271,8 +4271,8 @@ int RM_SetExpire(RedisModuleKey *key, mstime_t expire) {
  * If no TTL is associated with the key or if the key is empty,
  * REDISMODULE_NO_EXPIRE is returned. */
 mstime_t RM_GetAbsExpire(RedisModuleKey *key) {
-    mstime_t expire = getExpire(key->db,key->key);
-    if (expire == -1 || key->value == NULL)
+    mstime_t expire = kvobjGetExpire(key->kv);
+    if (expire == -1 || key->kv == NULL)
         return REDISMODULE_NO_EXPIRE;
     return expire;
 }
@@ -4287,10 +4287,10 @@ mstime_t RM_GetAbsExpire(RedisModuleKey *key) {
  * The function returns REDISMODULE_OK on success or REDISMODULE_ERR if
  * the key was not open for writing or is an empty key. */
 int RM_SetAbsExpire(RedisModuleKey *key, mstime_t expire) {
-    if (!(key->mode & REDISMODULE_WRITE) || key->value == NULL || (expire < 0 && expire != REDISMODULE_NO_EXPIRE))
+    if (!(key->mode & REDISMODULE_WRITE) || key->kv == NULL || (expire < 0 && expire != REDISMODULE_NO_EXPIRE))
         return REDISMODULE_ERR;
     if (expire != REDISMODULE_NO_EXPIRE) {
-        setExpire(key->ctx->client,key->db,key->key,expire);
+        key->kv = setExpire(key->ctx->client,key->db,key->key,expire);
     } else {
         removeExpire(key->db,key->key);
     }
@@ -4351,8 +4351,10 @@ int RM_GetToDbIdFromOptCtx(RedisModuleKeyOptCtx *ctx) {
 int RM_StringSet(RedisModuleKey *key, RedisModuleString *str) {
     if (!(key->mode & REDISMODULE_WRITE) || key->iter) return REDISMODULE_ERR;
     RM_DeleteKey(key);
-    setKey(key->ctx->client,key->db,key->key,str,SETKEY_NO_SIGNAL);
-    key->value = str;
+    /* Retain str so setKey copies it to db rather than reallocating it. */
+    incrRefCount(str);    
+    setKey(key->ctx->client,key->db,key->key,&str,SETKEY_NO_SIGNAL);
+    key->kv = str;
     return REDISMODULE_OK;
 }
 
@@ -4391,20 +4393,20 @@ char *RM_StringDMA(RedisModuleKey *key, size_t *len, int mode) {
      * a read only memory page, so the module will segfault if a write
      * attempt is performed. */
     char *emptystring = "<dma-empty-string>";
-    if (key->value == NULL) {
+    if (key->kv == NULL) {
         *len = 0;
         return emptystring;
     }
 
-    if (key->value->type != OBJ_STRING) return NULL;
+    if (key->kv->type != OBJ_STRING) return NULL;
 
     /* For write access, and even for read access if the object is encoded,
      * we unshare the string (that has the side effect of decoding it). */
-    if ((mode & REDISMODULE_WRITE) || key->value->encoding != OBJ_ENCODING_RAW)
-        key->value = dbUnshareStringValue(key->db, key->key, key->value);
+    if ((mode & REDISMODULE_WRITE) || key->kv->encoding != OBJ_ENCODING_RAW)
+        key->kv = dbUnshareStringValue(key->db, key->key, key->kv);
 
-    *len = sdslen(key->value->ptr);
-    return key->value->ptr;
+    *len = sdslen(key->kv->ptr);
+    return key->kv->ptr;
 }
 
 /* If the key is open for writing and is of string type, resize it, padding
@@ -4421,30 +4423,30 @@ char *RM_StringDMA(RedisModuleKey *key, size_t *len, int mode) {
  * unless the new length value requested is zero. */
 int RM_StringTruncate(RedisModuleKey *key, size_t newlen) {
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value && key->value->type != OBJ_STRING) return REDISMODULE_ERR;
+    if (key->kv && key->kv->type != OBJ_STRING) return REDISMODULE_ERR;
     if (newlen > 512*1024*1024) return REDISMODULE_ERR;
 
     /* Empty key and new len set to 0. Just return REDISMODULE_OK without
      * doing anything. */
-    if (key->value == NULL && newlen == 0) return REDISMODULE_OK;
+    if (key->kv == NULL && newlen == 0) return REDISMODULE_OK;
 
-    if (key->value == NULL) {
+    if (key->kv == NULL) {
         /* Empty key: create it with the new size. */
         robj *o = createObject(OBJ_STRING,sdsnewlen(NULL, newlen));
-        setKey(key->ctx->client,key->db,key->key,o,SETKEY_NO_SIGNAL);
-        key->value = o;
-        decrRefCount(o);
+        setKey(key->ctx->client, key->db, key->key, &o, SETKEY_NO_SIGNAL);
+        key->kv = o;
+        //decrRefCount(o);
     } else {
         /* Unshare and resize. */
-        key->value = dbUnshareStringValue(key->db, key->key, key->value);
-        size_t curlen = sdslen(key->value->ptr);
+        key->kv = dbUnshareStringValue(key->db, key->key, key->kv);
+        size_t curlen = sdslen(key->kv->ptr);
         if (newlen > curlen) {
-            key->value->ptr = sdsgrowzero(key->value->ptr,newlen);
+            key->kv->ptr = sdsgrowzero(key->kv->ptr,newlen);
         } else if (newlen < curlen) {
-            sdssubstr(key->value->ptr,0,newlen);
+            sdssubstr(key->kv->ptr,0,newlen);
             /* If the string is too wasteful, reallocate it. */
-            if (sdslen(key->value->ptr) < sdsavail(key->value->ptr))
-                key->value->ptr = sdsRemoveFreeSpace(key->value->ptr, 0);
+            if (sdslen(key->kv->ptr) < sdsavail(key->kv->ptr))
+                key->kv->ptr = sdsRemoveFreeSpace(key->kv->ptr, 0);
         }
     }
     return REDISMODULE_OK;
@@ -4486,7 +4488,7 @@ int moduleListIteratorSeek(RedisModuleKey *key, long index, int mode) {
     if (!key) {
         errno = EINVAL;
         return 0;
-    } else if (!key->value || key->value->type != OBJ_LIST) {
+    } else if (!key->kv || key->kv->type != OBJ_LIST) {
         errno = ENOTSUP;
         return 0;
     } if (!(key->mode & mode)) {
@@ -4494,7 +4496,7 @@ int moduleListIteratorSeek(RedisModuleKey *key, long index, int mode) {
         return 0;
     }
 
-    long length = listTypeLength(key->value);
+    long length = listTypeLength(key->kv);
     if (index < -length || index >= length) {
         errno = EDOM; /* Invalid index */
         return 0;
@@ -4502,7 +4504,7 @@ int moduleListIteratorSeek(RedisModuleKey *key, long index, int mode) {
 
     if (key->iter == NULL) {
         /* No existing iterator. Create one. */
-        key->iter = listTypeInitIterator(key->value, index, LIST_TAIL);
+        key->iter = listTypeInitIterator(key->kv, index, LIST_TAIL);
         serverAssert(key->iter != NULL);
         serverAssert(listTypeNext(key->iter, &key->u.list.entry));
         key->u.list.index = index;
@@ -4541,7 +4543,7 @@ int RM_ListPush(RedisModuleKey *key, int where, RedisModuleString *ele) {
     if (!key || !ele) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (key->value != NULL && key->value->type != OBJ_LIST) {
+    } else if (key->kv != NULL && key->kv->type != OBJ_LIST) {
         errno = ENOTSUP;
         return REDISMODULE_ERR;
     } if (!(key->mode & REDISMODULE_WRITE)) {
@@ -4550,11 +4552,11 @@ int RM_ListPush(RedisModuleKey *key, int where, RedisModuleString *ele) {
     }
 
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value && key->value->type != OBJ_LIST) return REDISMODULE_ERR;
+    if (key->kv && key->kv->type != OBJ_LIST) return REDISMODULE_ERR;
     if (key->iter) moduleFreeKeyIterator(key);
-    if (key->value == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_LIST);
-    listTypeTryConversionAppend(key->value, &ele, 0, 0, moduleFreeListIterator, key);
-    listTypePush(key->value, ele,
+    if (key->kv == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_LIST);
+    listTypeTryConversionAppend(key->kv, &ele, 0, 0, moduleFreeListIterator, key);
+    listTypePush(key->kv, ele,
         (where == REDISMODULE_LIST_HEAD) ? LIST_HEAD : LIST_TAIL);
     return REDISMODULE_OK;
 }
@@ -4575,7 +4577,7 @@ RedisModuleString *RM_ListPop(RedisModuleKey *key, int where) {
     if (!key) {
         errno = EINVAL;
         return NULL;
-    } else if (key->value == NULL || key->value->type != OBJ_LIST) {
+    } else if (key->kv == NULL || key->kv->type != OBJ_LIST) {
         errno = ENOTSUP;
         return NULL;
     } else if (!(key->mode & REDISMODULE_WRITE)) {
@@ -4583,12 +4585,12 @@ RedisModuleString *RM_ListPop(RedisModuleKey *key, int where) {
         return NULL;
     }
     if (key->iter) moduleFreeKeyIterator(key);
-    robj *ele = listTypePop(key->value,
+    robj *ele = listTypePop(key->kv,
         (where == REDISMODULE_LIST_HEAD) ? LIST_HEAD : LIST_TAIL);
     robj *decoded = getDecodedObject(ele);
     decrRefCount(ele);
     if (!moduleDelKeyIfEmpty(key))
-        listTypeTryConversion(key->value, LIST_CONV_SHRINKING, moduleFreeListIterator, key);
+        listTypeTryConversion(key->kv, LIST_CONV_SHRINKING, moduleFreeListIterator, key);
     autoMemoryAdd(key->ctx,REDISMODULE_AM_STRING,decoded);
     return decoded;
 }
@@ -4642,11 +4644,11 @@ int RM_ListSet(RedisModuleKey *key, long index, RedisModuleString *value) {
         errno = EINVAL;
         return REDISMODULE_ERR;
     }
-    if (!key->value || key->value->type != OBJ_LIST) {
+    if (!key->kv || key->kv->type != OBJ_LIST) {
         errno = ENOTSUP;
         return REDISMODULE_ERR;
     }
-    listTypeTryConversionAppend(key->value, &value, 0, 0, moduleFreeListIterator, key);
+    listTypeTryConversionAppend(key->kv, &value, 0, 0, moduleFreeListIterator, key);
     if (moduleListIteratorSeek(key, index, REDISMODULE_WRITE)) {
         listTypeReplace(&key->u.list.entry, value);
         /* A note in quicklist.c forbids use of iterator after insert, so
@@ -4677,22 +4679,22 @@ int RM_ListInsert(RedisModuleKey *key, long index, RedisModuleString *value) {
     if (!value) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (key != NULL && key->value == NULL &&
+    } else if (key != NULL && key->kv == NULL &&
                (index == 0 || index == -1)) {
         /* Insert in empty key => push. */
         return RM_ListPush(key, REDISMODULE_LIST_TAIL, value);
-    } else if (key != NULL && key->value != NULL &&
-               key->value->type == OBJ_LIST &&
-               (index == (long)listTypeLength(key->value) || index == -1)) {
+    } else if (key != NULL && key->kv != NULL &&
+               key->kv->type == OBJ_LIST &&
+               (index == (long)listTypeLength(key->kv) || index == -1)) {
         /* Insert after the last element => push tail. */
         return RM_ListPush(key, REDISMODULE_LIST_TAIL, value);
-    } else if (key != NULL && key->value != NULL &&
-               key->value->type == OBJ_LIST &&
-               (index == 0 || index == -(long)listTypeLength(key->value) - 1)) {
+    } else if (key != NULL && key->kv != NULL &&
+               key->kv->type == OBJ_LIST &&
+               (index == 0 || index == -(long)listTypeLength(key->kv) - 1)) {
         /* Insert before the first element => push head. */
         return RM_ListPush(key, REDISMODULE_LIST_HEAD, value);
     }
-    listTypeTryConversionAppend(key->value, &value, 0, 0, moduleFreeListIterator, key);
+    listTypeTryConversionAppend(key->kv, &value, 0, 0, moduleFreeListIterator, key);
     if (moduleListIteratorSeek(key, index, REDISMODULE_WRITE)) {
         int where = index < 0 ? LIST_TAIL : LIST_HEAD;
         listTypeInsert(&key->u.list.entry, value, where);
@@ -4719,7 +4721,7 @@ int RM_ListDelete(RedisModuleKey *key, long index) {
     if (moduleListIteratorSeek(key, index, REDISMODULE_WRITE)) {
         listTypeDelete(key->iter, &key->u.list.entry);
         if (moduleDelKeyIfEmpty(key)) return REDISMODULE_OK;
-        listTypeTryConversion(key->value, LIST_CONV_SHRINKING, moduleFreeListIterator, key);
+        listTypeTryConversion(key->kv, LIST_CONV_SHRINKING, moduleFreeListIterator, key);
         if (!key->iter) return REDISMODULE_OK; /* Return ASAP if iterator has been freed */
         if (listTypeNext(key->iter, &key->u.list.entry)) {
             /* After delete entry at position 'index', we need to update
@@ -4805,10 +4807,10 @@ int moduleZsetAddFlagsFromCoreFlags(int flags) {
 int RM_ZsetAdd(RedisModuleKey *key, double score, RedisModuleString *ele, int *flagsptr) {
     int in_flags = 0, out_flags = 0;
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value && key->value->type != OBJ_ZSET) return REDISMODULE_ERR;
-    if (key->value == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_ZSET);
+    if (key->kv && key->kv->type != OBJ_ZSET) return REDISMODULE_ERR;
+    if (key->kv == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_ZSET);
     if (flagsptr) in_flags = moduleZsetAddFlagsToCoreFlags(*flagsptr);
-    if (zsetAdd(key->value,score,ele->ptr,in_flags,&out_flags,NULL) == 0) {
+    if (zsetAdd(key->kv,score,ele->ptr,in_flags,&out_flags,NULL) == 0) {
         if (flagsptr) *flagsptr = 0;
         moduleDelKeyIfEmpty(key);
         return REDISMODULE_ERR;
@@ -4833,11 +4835,11 @@ int RM_ZsetAdd(RedisModuleKey *key, double score, RedisModuleString *ele, int *f
 int RM_ZsetIncrby(RedisModuleKey *key, double score, RedisModuleString *ele, int *flagsptr, double *newscore) {
     int in_flags = 0, out_flags = 0;
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value && key->value->type != OBJ_ZSET) return REDISMODULE_ERR;
-    if (key->value == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_ZSET);
+    if (key->kv && key->kv->type != OBJ_ZSET) return REDISMODULE_ERR;
+    if (key->kv == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_ZSET);
     if (flagsptr) in_flags = moduleZsetAddFlagsToCoreFlags(*flagsptr);
     in_flags |= ZADD_IN_INCR;
-    if (zsetAdd(key->value,score,ele->ptr,in_flags,&out_flags,newscore) == 0) {
+    if (zsetAdd(key->kv,score,ele->ptr,in_flags,&out_flags,newscore) == 0) {
         if (flagsptr) *flagsptr = 0;
         moduleDelKeyIfEmpty(key);
         return REDISMODULE_ERR;
@@ -4866,8 +4868,8 @@ int RM_ZsetIncrby(RedisModuleKey *key, double score, RedisModuleString *ele, int
  * Empty keys will be handled correctly by doing nothing. */
 int RM_ZsetRem(RedisModuleKey *key, RedisModuleString *ele, int *deleted) {
     if (!(key->mode & REDISMODULE_WRITE)) return REDISMODULE_ERR;
-    if (key->value && key->value->type != OBJ_ZSET) return REDISMODULE_ERR;
-    if (key->value != NULL && zsetDel(key->value,ele->ptr)) {
+    if (key->kv && key->kv->type != OBJ_ZSET) return REDISMODULE_ERR;
+    if (key->kv != NULL && zsetDel(key->kv,ele->ptr)) {
         if (deleted) *deleted = 1;
         moduleDelKeyIfEmpty(key);
     } else {
@@ -4885,9 +4887,9 @@ int RM_ZsetRem(RedisModuleKey *key, RedisModuleString *ele, int *deleted) {
  * * The key is an open empty key.
  */
 int RM_ZsetScore(RedisModuleKey *key, RedisModuleString *ele, double *score) {
-    if (key->value == NULL) return REDISMODULE_ERR;
-    if (key->value->type != OBJ_ZSET) return REDISMODULE_ERR;
-    if (zsetScore(key->value,ele->ptr,score) == C_ERR) return REDISMODULE_ERR;
+    if (key->kv == NULL) return REDISMODULE_ERR;
+    if (key->kv->type != OBJ_ZSET) return REDISMODULE_ERR;
+    if (zsetScore(key->kv,ele->ptr,score) == C_ERR) return REDISMODULE_ERR;
     return REDISMODULE_OK;
 }
 
@@ -4903,7 +4905,7 @@ void zsetKeyReset(RedisModuleKey *key) {
 
 /* Stop a sorted set iteration. */
 void RM_ZsetRangeStop(RedisModuleKey *key) {
-    if (!key->value || key->value->type != OBJ_ZSET) return;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return;
     /* Free resources if needed. */
     if (key->u.zset.type == REDISMODULE_ZSET_RANGE_LEX)
         zslFreeLexRange(&key->u.zset.lrs);
@@ -4915,7 +4917,7 @@ void RM_ZsetRangeStop(RedisModuleKey *key) {
 
 /* Return the "End of range" flag value to signal the end of the iteration. */
 int RM_ZsetRangeEndReached(RedisModuleKey *key) {
-    if (!key->value || key->value->type != OBJ_ZSET) return 1;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return 1;
     return key->u.zset.er;
 }
 
@@ -4926,7 +4928,7 @@ int RM_ZsetRangeEndReached(RedisModuleKey *key) {
  * otherwise the last. Return REDISMODULE_OK on success otherwise
  * REDISMODULE_ERR. */
 int zsetInitScoreRange(RedisModuleKey *key, double min, double max, int minex, int maxex, int first) {
-    if (!key->value || key->value->type != OBJ_ZSET) return REDISMODULE_ERR;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return REDISMODULE_ERR;
 
     RM_ZsetRangeStop(key);
     key->u.zset.type = REDISMODULE_ZSET_RANGE_SCORE;
@@ -4940,11 +4942,11 @@ int zsetInitScoreRange(RedisModuleKey *key, double min, double max, int minex, i
     zrs->minex = minex;
     zrs->maxex = maxex;
 
-    if (key->value->encoding == OBJ_ENCODING_LISTPACK) {
-        key->u.zset.current = first ? zzlFirstInRange(key->value->ptr,zrs) :
-                                      zzlLastInRange(key->value->ptr,zrs);
-    } else if (key->value->encoding == OBJ_ENCODING_SKIPLIST) {
-        zset *zs = key->value->ptr;
+    if (key->kv->encoding == OBJ_ENCODING_LISTPACK) {
+        key->u.zset.current = first ? zzlFirstInRange(key->kv->ptr,zrs) :
+                                      zzlLastInRange(key->kv->ptr,zrs);
+    } else if (key->kv->encoding == OBJ_ENCODING_SKIPLIST) {
+        zset *zs = key->kv->ptr;
         zskiplist *zsl = zs->zsl;
         key->u.zset.current = first ? zslNthInRange(zsl,zrs,0) :
                                       zslNthInRange(zsl,zrs,-1);
@@ -4990,7 +4992,7 @@ int RM_ZsetLastInScoreRange(RedisModuleKey *key, double min, double max, int min
  * Note that this function takes 'min' and 'max' in the same form of the
  * Redis ZRANGEBYLEX command. */
 int zsetInitLexRange(RedisModuleKey *key, RedisModuleString *min, RedisModuleString *max, int first) {
-    if (!key->value || key->value->type != OBJ_ZSET) return REDISMODULE_ERR;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return REDISMODULE_ERR;
 
     RM_ZsetRangeStop(key);
     key->u.zset.er = 0;
@@ -5004,11 +5006,11 @@ int zsetInitLexRange(RedisModuleKey *key, RedisModuleString *min, RedisModuleStr
      * otherwise we don't want the zlexrangespec to be freed. */
     key->u.zset.type = REDISMODULE_ZSET_RANGE_LEX;
 
-    if (key->value->encoding == OBJ_ENCODING_LISTPACK) {
-        key->u.zset.current = first ? zzlFirstInLexRange(key->value->ptr,zlrs) :
-                                      zzlLastInLexRange(key->value->ptr,zlrs);
-    } else if (key->value->encoding == OBJ_ENCODING_SKIPLIST) {
-        zset *zs = key->value->ptr;
+    if (key->kv->encoding == OBJ_ENCODING_LISTPACK) {
+        key->u.zset.current = first ? zzlFirstInLexRange(key->kv->ptr,zlrs) :
+                                      zzlLastInLexRange(key->kv->ptr,zlrs);
+    } else if (key->kv->encoding == OBJ_ENCODING_SKIPLIST) {
+        zset *zs = key->kv->ptr;
         zskiplist *zsl = zs->zsl;
         key->u.zset.current = first ? zslNthInLexRange(zsl,zlrs,0) :
                                       zslNthInLexRange(zsl,zlrs,-1);
@@ -5048,18 +5050,18 @@ int RM_ZsetLastInLexRange(RedisModuleKey *key, RedisModuleString *min, RedisModu
 RedisModuleString *RM_ZsetRangeCurrentElement(RedisModuleKey *key, double *score) {
     RedisModuleString *str;
 
-    if (!key->value || key->value->type != OBJ_ZSET) return NULL;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return NULL;
     if (key->u.zset.current == NULL) return NULL;
-    if (key->value->encoding == OBJ_ENCODING_LISTPACK) {
+    if (key->kv->encoding == OBJ_ENCODING_LISTPACK) {
         unsigned char *eptr, *sptr;
         eptr = key->u.zset.current;
         sds ele = lpGetObject(eptr);
         if (score) {
-            sptr = lpNext(key->value->ptr,eptr);
+            sptr = lpNext(key->kv->ptr,eptr);
             *score = zzlGetScore(sptr);
         }
         str = createObject(OBJ_STRING,ele);
-    } else if (key->value->encoding == OBJ_ENCODING_SKIPLIST) {
+    } else if (key->kv->encoding == OBJ_ENCODING_SKIPLIST) {
         zskiplistNode *ln = key->u.zset.current;
         if (score) *score = ln->score;
         str = createStringObject(ln->ele,sdslen(ln->ele));
@@ -5074,11 +5076,11 @@ RedisModuleString *RM_ZsetRangeCurrentElement(RedisModuleKey *key, double *score
  * a next element, 0 if we are already at the latest element or the range
  * does not include any item at all. */
 int RM_ZsetRangeNext(RedisModuleKey *key) {
-    if (!key->value || key->value->type != OBJ_ZSET) return 0;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return 0;
     if (!key->u.zset.type || !key->u.zset.current) return 0; /* No active iterator. */
 
-    if (key->value->encoding == OBJ_ENCODING_LISTPACK) {
-        unsigned char *zl = key->value->ptr;
+    if (key->kv->encoding == OBJ_ENCODING_LISTPACK) {
+        unsigned char *zl = key->kv->ptr;
         unsigned char *eptr = key->u.zset.current;
         unsigned char *next;
         next = lpNext(zl,eptr); /* Skip element. */
@@ -5108,7 +5110,7 @@ int RM_ZsetRangeNext(RedisModuleKey *key) {
             key->u.zset.current = next;
             return 1;
         }
-    } else if (key->value->encoding == OBJ_ENCODING_SKIPLIST) {
+    } else if (key->kv->encoding == OBJ_ENCODING_SKIPLIST) {
         zskiplistNode *ln = key->u.zset.current, *next = ln->level[0].forward;
         if (next == NULL) {
             key->u.zset.er = 1;
@@ -5138,11 +5140,11 @@ int RM_ZsetRangeNext(RedisModuleKey *key) {
  * a previous element, 0 if we are already at the first element or the range
  * does not include any item at all. */
 int RM_ZsetRangePrev(RedisModuleKey *key) {
-    if (!key->value || key->value->type != OBJ_ZSET) return 0;
+    if (!key->kv || key->kv->type != OBJ_ZSET) return 0;
     if (!key->u.zset.type || !key->u.zset.current) return 0; /* No active iterator. */
 
-    if (key->value->encoding == OBJ_ENCODING_LISTPACK) {
-        unsigned char *zl = key->value->ptr;
+    if (key->kv->encoding == OBJ_ENCODING_LISTPACK) {
+        unsigned char *zl = key->kv->ptr;
         unsigned char *eptr = key->u.zset.current;
         unsigned char *prev;
         prev = lpPrev(zl,eptr); /* Go back to previous score. */
@@ -5172,7 +5174,7 @@ int RM_ZsetRangePrev(RedisModuleKey *key) {
             key->u.zset.current = prev;
             return 1;
         }
-    } else if (key->value->encoding == OBJ_ENCODING_SKIPLIST) {
+    } else if (key->kv->encoding == OBJ_ENCODING_SKIPLIST) {
         zskiplistNode *ln = key->u.zset.current, *prev = ln->backward;
         if (prev == NULL) {
             key->u.zset.er = 1;
@@ -5279,14 +5281,14 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
                            REDISMODULE_HASH_COUNT_ALL))) {
         errno = EINVAL;
         return 0;
-    } else if (key->value && key->value->type != OBJ_HASH) {
+    } else if (key->kv && key->kv->type != OBJ_HASH) {
         errno = ENOTSUP;
         return 0;
     } else if (!(key->mode & REDISMODULE_WRITE)) {
         errno = EBADF;
         return 0;
     }
-    if (key->value == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_HASH);
+    if (key->kv == NULL) moduleCreateEmptyKey(key,REDISMODULE_KEYTYPE_HASH);
 
     int count = 0;
     va_start(ap, flags);
@@ -5319,7 +5321,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
             if (flags & REDISMODULE_HASH_XX)
                 hfeFlags |= HFE_LAZY_AVOID_FIELD_DEL;
 
-            int exists = hashTypeExists(key->db, key->value, field->ptr, hfeFlags, NULL);
+            int exists = hashTypeExists(key->db, key->kv, field->ptr, hfeFlags, NULL);
             if (((flags & REDISMODULE_HASH_XX) && !exists) ||
                 ((flags & REDISMODULE_HASH_NX) && exists))
             {
@@ -5330,7 +5332,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
 
         /* Handle deletion if value is REDISMODULE_HASH_DELETE. */
         if (value == REDISMODULE_HASH_DELETE) {
-            count += hashTypeDelete(key->value, field->ptr, 1);
+            count += hashTypeDelete(key->kv, field->ptr, 1);
             if (flags & REDISMODULE_HASH_CFIELDS) decrRefCount(field);
             continue;
         }
@@ -5343,8 +5345,8 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
             low_flags |= HASH_SET_TAKE_FIELD;
 
         robj *argv[2] = {field,value};
-        hashTypeTryConversion(key->db,key->value,argv,0,1);
-        int updated = hashTypeSet(key->db, key->value, field->ptr, value->ptr, low_flags);
+        hashTypeTryConversion(key->db,key->kv,argv,0,1);
+        int updated = hashTypeSet(key->db, key->kv, field->ptr, value->ptr, low_flags);
         count += (flags & REDISMODULE_HASH_COUNT_ALL) ? 1 : updated;
 
         /* If CFIELDS is active, SDS string ownership is now of hashTypeSet(),
@@ -5414,7 +5416,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
 int RM_HashGet(RedisModuleKey *key, int flags, ...) {
     int hfeFlags = HFE_LAZY_AVOID_FIELD_DEL | HFE_LAZY_AVOID_HASH_DEL;
     va_list ap;
-    if (key->value && key->value->type != OBJ_HASH) return REDISMODULE_ERR;
+    if (key->kv && key->kv->type != OBJ_HASH) return REDISMODULE_ERR;
 
     if (key->mode & REDISMODULE_OPEN_KEY_ACCESS_EXPIRED)
         hfeFlags = HFE_LAZY_ACCESS_EXPIRED; /* allow read also expired fields */
@@ -5440,26 +5442,26 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
         /* Query the hash for existence or value object. */
         if (flags & REDISMODULE_HASH_EXISTS) {
             existsptr = va_arg(ap,int*);
-            if (key->value) {
-                *existsptr = hashTypeExists(key->db, key->value, field->ptr, hfeFlags, NULL);
+            if (key->kv) {
+                *existsptr = hashTypeExists(key->db, key->kv, field->ptr, hfeFlags, NULL);
             } else {
                 *existsptr = 0;
             }
         } else if (flags & REDISMODULE_HASH_EXPIRE_TIME) {
             mstime_t *expireptr = va_arg(ap,mstime_t*);            
             *expireptr = REDISMODULE_NO_EXPIRE;
-            if (key->value) {
+            if (key->kv) {
                 uint64_t expireTime = 0;
                 /* As an opt, avoid fetching value, only expire time */
-                int res = hashTypeGetValueObject(key->db, key->value, field->ptr,
+                int res = hashTypeGetValueObject(key->db, key->kv, field->ptr,
                                                  hfeFlags, NULL, &expireTime, NULL);
                 /* If field has expiration time */
                 if (res && expireTime != 0) *expireptr = expireTime;
             }
         } else {
             valueptr = va_arg(ap,RedisModuleString**);
-            if (key->value) {
-                hashTypeGetValueObject(key->db, key->value, field->ptr,
+            if (key->kv) {
+                hashTypeGetValueObject(key->db, key->kv, field->ptr,
                                        hfeFlags, valueptr, NULL, NULL);
 
                 if (*valueptr) {
@@ -5491,10 +5493,10 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
  *     is not a hash.
  */
 mstime_t RM_HashFieldMinExpire(RedisModuleKey *key) {
-    if ((!key->value) || (key->value->type != OBJ_HASH))
+    if ((!key->kv) || (key->kv->type != OBJ_HASH))
         return REDISMODULE_NO_EXPIRE;
     
-    mstime_t min = hashTypeGetMinExpire(key->value, 1);
+    mstime_t min = hashTypeGetMinExpire(key->kv, 1);
     return (min == EB_EXPIRE_TIME_INVALID) ? REDISMODULE_NO_EXPIRE : min;
 }
 
@@ -5546,7 +5548,7 @@ int RM_StreamAdd(RedisModuleKey *key, int flags, RedisModuleStreamID *id, RedisM
         (!(flags & REDISMODULE_STREAM_ADD_AUTOID) && !id)) { /* id required */
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (key->value && key->value->type != OBJ_STREAM) {
+    } else if (key->kv && key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP; /* wrong type */
         return REDISMODULE_ERR;
     } else if (!(key->mode & REDISMODULE_WRITE)) {
@@ -5560,12 +5562,12 @@ int RM_StreamAdd(RedisModuleKey *key, int flags, RedisModuleStreamID *id, RedisM
 
     /* Create key if necessary */
     int created = 0;
-    if (key->value == NULL) {
+    if (key->kv == NULL) {
         moduleCreateEmptyKey(key, REDISMODULE_KEYTYPE_STREAM);
         created = 1;
     }
 
-    stream *s = key->value->ptr;
+    stream *s = key->kv->ptr;
     if (s->last_id.ms == UINT64_MAX && s->last_id.seq == UINT64_MAX) {
         /* The stream has reached the last possible ID */
         errno = EFBIG;
@@ -5622,7 +5624,7 @@ int RM_StreamDelete(RedisModuleKey *key, RedisModuleStreamID *id) {
     if (!key || !id) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP; /* wrong type */
         return REDISMODULE_ERR;
     } else if (!(key->mode & REDISMODULE_WRITE) ||
@@ -5630,7 +5632,7 @@ int RM_StreamDelete(RedisModuleKey *key, RedisModuleStreamID *id) {
         errno = EBADF; /* key not opened for writing or iterator started */
         return REDISMODULE_ERR;
     }
-    stream *s = key->value->ptr;
+    stream *s = key->kv->ptr;
     streamID streamid = {id->ms, id->seq};
     if (streamDeleteItem(s, &streamid)) {
         return REDISMODULE_OK;
@@ -5696,7 +5698,7 @@ int RM_StreamIteratorStart(RedisModuleKey *key, int flags, RedisModuleStreamID *
                    REDISMODULE_STREAM_ITERATOR_REVERSE))) {
         errno = EINVAL; /* key missing or invalid flags */
         return REDISMODULE_ERR;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return REDISMODULE_ERR; /* not a stream */
     } else if (key->iter) {
@@ -5717,7 +5719,7 @@ int RM_StreamIteratorStart(RedisModuleKey *key, int flags, RedisModuleStreamID *
     }
 
     /* create iterator */
-    stream *s = key->value->ptr;
+    stream *s = key->kv->ptr;
     int rev = flags & REDISMODULE_STREAM_ITERATOR_REVERSE;
     streamIterator *si = zmalloc(sizeof(*si));
     streamIteratorStart(si, s, start ? &lower : NULL, end ? &upper : NULL, rev);
@@ -5744,7 +5746,7 @@ int RM_StreamIteratorStop(RedisModuleKey *key) {
     if (!key) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return REDISMODULE_ERR;
     } else if (!key->iter) {
@@ -5786,7 +5788,7 @@ int RM_StreamIteratorNextID(RedisModuleKey *key, RedisModuleStreamID *id, long *
     if (!key) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return REDISMODULE_ERR;
     } else if (!key->iter) {
@@ -5842,7 +5844,7 @@ int RM_StreamIteratorNextField(RedisModuleKey *key, RedisModuleString **field_pt
     if (!key) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return REDISMODULE_ERR;
     } else if (!key->iter) {
@@ -5885,7 +5887,7 @@ int RM_StreamIteratorDelete(RedisModuleKey *key) {
     if (!key) {
         errno = EINVAL;
         return REDISMODULE_ERR;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return REDISMODULE_ERR;
     } else if (!(key->mode & REDISMODULE_WRITE) || !key->iter) {
@@ -5923,7 +5925,7 @@ long long RM_StreamTrimByLength(RedisModuleKey *key, int flags, long long length
     if (!key || (flags & ~(REDISMODULE_STREAM_TRIM_APPROX)) || length < 0) {
         errno = EINVAL;
         return -1;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return -1;
     } else if (!(key->mode & REDISMODULE_WRITE)) {
@@ -5931,7 +5933,7 @@ long long RM_StreamTrimByLength(RedisModuleKey *key, int flags, long long length
         return -1;
     }
     int approx = flags & REDISMODULE_STREAM_TRIM_APPROX ? 1 : 0;
-    return streamTrimByLength((stream *)key->value->ptr, length, approx);
+    return streamTrimByLength((stream *)key->kv->ptr, length, approx);
 }
 
 /* Trim a stream by ID, similar to XTRIM with MINID.
@@ -5953,7 +5955,7 @@ long long RM_StreamTrimByID(RedisModuleKey *key, int flags, RedisModuleStreamID 
     if (!key || (flags & ~(REDISMODULE_STREAM_TRIM_APPROX)) || !id) {
         errno = EINVAL;
         return -1;
-    } else if (!key->value || key->value->type != OBJ_STREAM) {
+    } else if (!key->kv || key->kv->type != OBJ_STREAM) {
         errno = ENOTSUP;
         return -1;
     } else if (!(key->mode & REDISMODULE_WRITE)) {
@@ -5962,7 +5964,7 @@ long long RM_StreamTrimByID(RedisModuleKey *key, int flags, RedisModuleStreamID 
     }
     int approx = flags & REDISMODULE_STREAM_TRIM_APPROX ? 1 : 0;
     streamID minid = (streamID){id->ms, id->seq};
-    return streamTrimByID((stream *)key->value->ptr, minid, approx);
+    return streamTrimByID((stream *)key->kv->ptr, minid, approx);
 }
 
 /* --------------------------------------------------------------------------
@@ -7104,9 +7106,9 @@ int RM_ModuleTypeSetValue(RedisModuleKey *key, moduleType *mt, void *value) {
     if (!(key->mode & REDISMODULE_WRITE) || key->iter) return REDISMODULE_ERR;
     RM_DeleteKey(key);
     robj *o = createModuleObject(mt,value);
-    setKey(key->ctx->client,key->db,key->key,o,SETKEY_NO_SIGNAL);
-    decrRefCount(o);
-    key->value = o;
+    setKey(key->ctx->client,key->db,key->key, &o,SETKEY_NO_SIGNAL);
+    //decrRefCount(o);
+    key->kv = o;
     return REDISMODULE_OK;
 }
 
@@ -7117,9 +7119,9 @@ int RM_ModuleTypeSetValue(RedisModuleKey *key, moduleType *mt, void *value) {
  * then NULL is returned instead. */
 moduleType *RM_ModuleTypeGetType(RedisModuleKey *key) {
     if (key == NULL ||
-        key->value == NULL ||
+        key->kv == NULL ||
         RM_KeyType(key) != REDISMODULE_KEYTYPE_MODULE) return NULL;
-    moduleValue *mv = key->value->ptr;
+    moduleValue *mv = key->kv->ptr;
     return mv->type;
 }
 
@@ -7131,9 +7133,9 @@ moduleType *RM_ModuleTypeGetType(RedisModuleKey *key) {
  * then NULL is returned instead. */
 void *RM_ModuleTypeGetValue(RedisModuleKey *key) {
     if (key == NULL ||
-        key->value == NULL ||
+        key->kv == NULL ||
         RM_KeyType(key) != REDISMODULE_KEYTYPE_MODULE) return NULL;
-    moduleValue *mv = key->value->ptr;
+    moduleValue *mv = key->kv->ptr;
     return mv->value;
 }
 
@@ -11103,15 +11105,16 @@ typedef struct RedisModuleScanCursor{
     int done;
 }RedisModuleScanCursor;
 
-static void moduleScanCallback(void *privdata, const dictEntry *de) {
+static void moduleScanCallback(void *privdata, const dictEntry *de, dictEntLink plink) {
+    UNUSED(plink);
     ScanCBData *data = privdata;
-    sds key = dictGetKey(de);
-    robj* val = dictGetVal(de);
+    kvobj *keyvalObj = dictGetKey(de);
+    sds key = kvobjGetKey(keyvalObj);
     RedisModuleString *keyname = createObject(OBJ_STRING,sdsdup(key));
 
     /* Setup the key handle. */
     RedisModuleKey kp = {0};
-    moduleInitKey(&kp, data->ctx, keyname, val, REDISMODULE_READ);
+    moduleInitKey(&kp, data->ctx, keyname, keyvalObj, REDISMODULE_READ);
 
     data->fn(data->ctx, keyname, &kp, data->user_data);
 
@@ -11217,15 +11220,16 @@ typedef struct {
     RedisModuleScanKeyCB fn;
 } ScanKeyCBData;
 
-static void moduleScanKeyCallback(void *privdata, const dictEntry *de) {
+static void moduleScanKeyCallback(void *privdata, const dictEntry *de, dictEntLink plink) {
+    UNUSED(plink);
     ScanKeyCBData *data = privdata;
     sds key = dictGetKey(de);
-    robj *o = data->key->value;
+    kvobj *kv = data->key->kv;
     robj *field = NULL;
     robj *value = NULL;
-    if (o->type == OBJ_SET) {
+    if (kv->type == OBJ_SET) {
         value = NULL;
-    } else if (o->type == OBJ_HASH) {
+    } else if (kv->type == OBJ_HASH) {
         sds val = dictGetVal(de);
 
         /* If field is expired and not indicated to access expired, then ignore */
@@ -11235,7 +11239,7 @@ static void moduleScanKeyCallback(void *privdata, const dictEntry *de) {
 
         field = createStringObject(key, hfieldlen(key));
         value = createStringObject(val, sdslen(val));
-    } else if (o->type == OBJ_ZSET) {
+    } else if (kv->type == OBJ_ZSET) {
         double *val = (double*)dictGetVal(de);
         value = createStringObjectFromLongDouble(*val, 0);
     }
@@ -11297,21 +11301,21 @@ static void moduleScanKeyCallback(void *privdata, const dictEntry *de) {
  * deleting the current element of the data structure is safe, while removing
  * the key you are iterating is not safe. */
 int RM_ScanKey(RedisModuleKey *key, RedisModuleScanCursor *cursor, RedisModuleScanKeyCB fn, void *privdata) {
-    if (key == NULL || key->value == NULL) {
+    if (key == NULL || key->kv == NULL) {
         errno = EINVAL;
         return 0;
     }
     dict *ht = NULL;
-    robj *o = key->value;
-    if (o->type == OBJ_SET) {
-        if (o->encoding == OBJ_ENCODING_HT)
-            ht = o->ptr;
-    } else if (o->type == OBJ_HASH) {
-        if (o->encoding == OBJ_ENCODING_HT)
-            ht = o->ptr;
-    } else if (o->type == OBJ_ZSET) {
-        if (o->encoding == OBJ_ENCODING_SKIPLIST)
-            ht = ((zset *)o->ptr)->dict;
+    kvobj *kv = key->kv;
+    if (kv->type == OBJ_SET) {
+        if (kv->encoding == OBJ_ENCODING_HT)
+            ht = kv->ptr;
+    } else if (kv->type == OBJ_HASH) {
+        if (kv->encoding == OBJ_ENCODING_HT)
+            ht = kv->ptr;
+    } else if (kv->type == OBJ_ZSET) {
+        if (kv->encoding == OBJ_ENCODING_SKIPLIST)
+            ht = ((zset *)kv->ptr)->dict;
     } else {
         errno = EINVAL;
         return 0;
@@ -11328,8 +11332,8 @@ int RM_ScanKey(RedisModuleKey *key, RedisModuleScanCursor *cursor, RedisModuleSc
             cursor->done = 1;
             ret = 0;
         }
-    } else if (o->type == OBJ_SET) {
-        setTypeIterator *si = setTypeInitIterator(o);
+    } else if (kv->type == OBJ_SET) {
+        setTypeIterator *si = setTypeInitIterator(kv);
         sds sdsele;
         while ((sdsele = setTypeNextObject(si)) != NULL) {
             robj *field = createObject(OBJ_STRING, sdsele);
@@ -11340,15 +11344,15 @@ int RM_ScanKey(RedisModuleKey *key, RedisModuleScanCursor *cursor, RedisModuleSc
         cursor->cursor = 1;
         cursor->done = 1;
         ret = 0;
-    } else if (o->type == OBJ_ZSET || o->type == OBJ_HASH) {
+    } else if (kv->type == OBJ_ZSET || kv->type == OBJ_HASH) {
         unsigned char *lp, *p;
         /* is hash with expiry on fields, then lp tuples are [field][value][expire] */
-        int hfe = o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_LISTPACK_EX;
+        int hfe = kv->type == OBJ_HASH && kv->encoding == OBJ_ENCODING_LISTPACK_EX;
 
-        if (o->type == OBJ_HASH)
-            lp = hashTypeListpackGetLp(o);
+        if (kv->type == OBJ_HASH)
+            lp = hashTypeListpackGetLp(kv);
         else
-            lp = o->ptr;
+            lp = kv->ptr;
 
         p = lpSeek(lp,0);
         while(p) {
@@ -11367,7 +11371,7 @@ int RM_ScanKey(RedisModuleKey *key, RedisModuleScanCursor *cursor, RedisModuleSc
 
                 /* Skip expired fields */
                 if ((!(key->mode & REDISMODULE_OPEN_KEY_ACCESS_EXPIRED)) &&
-                    (hashTypeIsExpired(o, vllExpire)))
+                    (hashTypeIsExpired(kv, vllExpire)))
                     continue;
             }
 
@@ -11892,7 +11896,7 @@ int RM_IsSubEventSupported(RedisModuleEvent event, int64_t subevent) {
 typedef struct KeyInfo {
     int32_t dbnum;
     RedisModuleString *key;
-    robj *value;
+    kvobj *kv;  /* key-value object */
     int mode;
 } KeyInfo;
 
@@ -11968,7 +11972,7 @@ void moduleFireServerEvent(uint64_t eid, int subid, void *data) {
             } else if (eid == REDISMODULE_EVENT_KEY) {
                 KeyInfo *info = data;
                 selectDb(ctx.client, info->dbnum);
-                moduleInitKey(&key, &ctx, info->key, info->value, info->mode);
+                moduleInitKey(&key, &ctx, info->key, info->kv, info->mode);
                 moduledata = &ki;
             }
 
@@ -12025,7 +12029,7 @@ void processModuleLoadingProgressEvent(int is_aof) {
 
 /* When a key is deleted (in dbAsyncDelete/dbSyncDelete/setKey), it
 *  will be called to tell the module which key is about to be released. */
-void moduleNotifyKeyUnlink(robj *key, robj *val, int dbid, int flags) {
+void moduleNotifyKeyUnlink(robj *key, kvobj *kv, int dbid, int flags) {
     server.allow_access_expired++;
     int subevent = REDISMODULE_SUBEVENT_KEY_DELETED;
     if (flags & DB_FLAG_KEY_EXPIRED) {
@@ -12035,11 +12039,11 @@ void moduleNotifyKeyUnlink(robj *key, robj *val, int dbid, int flags) {
     } else if (flags & DB_FLAG_KEY_OVERWRITE) {
         subevent = REDISMODULE_SUBEVENT_KEY_OVERWRITTEN;
     }
-    KeyInfo info = {dbid, key, val, REDISMODULE_READ};
+    KeyInfo info = {dbid, key, kv, REDISMODULE_READ};
     moduleFireServerEvent(REDISMODULE_EVENT_KEY, subevent, &info);
 
-    if (val->type == OBJ_MODULE) {
-        moduleValue *mv = val->ptr;
+    if (kv->type == OBJ_MODULE) {
+        moduleValue *mv = kv->ptr;
         moduleType *mt = mv->type;
         /* We prefer to use the enhanced version. */
         if (mt->unlink2 != NULL) {
@@ -13549,9 +13553,9 @@ size_t moduleCount(void) {
  * servers's maxmemory policy is LFU based. Value is idle time in milliseconds.
  * returns REDISMODULE_OK if the LRU was updated, REDISMODULE_ERR otherwise. */
 int RM_SetLRU(RedisModuleKey *key, mstime_t lru_idle) {
-    if (!key->value)
+    if (!key->kv)
         return REDISMODULE_ERR;
-    if (objectSetLRUOrLFU(key->value, -1, lru_idle, lru_idle>=0 ? LRU_CLOCK() : 0, 1))
+    if (objectSetLRUOrLFU(key->kv, -1, lru_idle, lru_idle>=0 ? LRU_CLOCK() : 0, 1))
         return REDISMODULE_OK;
     return REDISMODULE_ERR;
 }
@@ -13562,11 +13566,11 @@ int RM_SetLRU(RedisModuleKey *key, mstime_t lru_idle) {
  * returns REDISMODULE_OK if when key is valid. */
 int RM_GetLRU(RedisModuleKey *key, mstime_t *lru_idle) {
     *lru_idle = -1;
-    if (!key->value)
+    if (!key->kv)
         return REDISMODULE_ERR;
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU)
         return REDISMODULE_OK;
-    *lru_idle = estimateObjectIdleTime(key->value);
+    *lru_idle = estimateObjectIdleTime(key->kv);
     return REDISMODULE_OK;
 }
 
@@ -13576,9 +13580,9 @@ int RM_GetLRU(RedisModuleKey *key, mstime_t *lru_idle) {
  * the access frequencyonly (must be <= 255).
  * returns REDISMODULE_OK if the LFU was updated, REDISMODULE_ERR otherwise. */
 int RM_SetLFU(RedisModuleKey *key, long long lfu_freq) {
-    if (!key->value)
+    if (!key->kv)
         return REDISMODULE_ERR;
-    if (objectSetLRUOrLFU(key->value, lfu_freq, -1, 0, 1))
+    if (objectSetLRUOrLFU(key->kv, lfu_freq, -1, 0, 1))
         return REDISMODULE_OK;
     return REDISMODULE_ERR;
 }
@@ -13588,10 +13592,10 @@ int RM_SetLFU(RedisModuleKey *key, long long lfu_freq) {
  * returns REDISMODULE_OK if when key is valid. */
 int RM_GetLFU(RedisModuleKey *key, long long *lfu_freq) {
     *lfu_freq = -1;
-    if (!key->value)
+    if (!key->kv)
         return REDISMODULE_ERR;
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU)
-        *lfu_freq = LFUDecrAndReturn(key->value);
+        *lfu_freq = LFUDecrAndReturn(key->kv);
     return REDISMODULE_OK;
 }
 
@@ -13687,10 +13691,10 @@ int RM_GetTypeMethodVersion(void) {
 int RM_ModuleTypeReplaceValue(RedisModuleKey *key, moduleType *mt, void *new_value, void **old_value) {
     if (!(key->mode & REDISMODULE_WRITE) || key->iter)
         return REDISMODULE_ERR;
-    if (!key->value || key->value->type != OBJ_MODULE)
+    if (!key->kv || key->kv->type != OBJ_MODULE)
         return REDISMODULE_ERR;
 
-    moduleValue *mv = key->value->ptr;
+    moduleValue *mv = key->kv->ptr;
     if (mv->type != mt)
         return REDISMODULE_ERR;
 
