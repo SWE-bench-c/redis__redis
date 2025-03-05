@@ -609,7 +609,7 @@ void scanLaterHash(robj *ob, unsigned long *cursor) {
             ebuckets *eb = hashTypeGetDictMetaHFE(d);
             ebDefrag(eb, &hashFieldExpireBucketsType, cursor, &eb_defragfns, d);
         } else {
-            /* Finish defragmentation if this dict doesn't have expired fileds. */
+            /* Finish defragmentation if this dict doesn't have expired fields. */
             *cursor = 0;
         }
         if (!*cursor) defrag_phase = HASH_DEFRAG_NONE;
