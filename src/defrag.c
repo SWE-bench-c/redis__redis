@@ -596,6 +596,7 @@ void scanLaterHash(robj *ob, unsigned long *cursor) {
     if (!*cursor || defrag_phase == HASH_DEFRAG_NONE)
         defrag_phase = HASH_DEFRAG_DICT;
 
+    /* Defrag hash dictionary but skip TTL fields. */
     if (defrag_phase == HASH_DEFRAG_DICT) {
         dictDefragFunctions defragfns = {
             .defragAlloc = activeDefragAlloc,
@@ -603,9 +604,12 @@ void scanLaterHash(robj *ob, unsigned long *cursor) {
             .defragVal = (dictDefragAllocFunction *)activeDefragSds
         };
         *cursor = dictScanDefrag(d, *cursor, activeDefragHfieldDictCallback, &defragfns, d);
+
+        /* Move to next phase. */
         if (!*cursor) defrag_phase = HASH_DEFRAG_EBUCKETS;
     }
 
+    /* Defrag ebuckets metadata and TTL fields. */
     if (defrag_phase == HASH_DEFRAG_EBUCKETS) {
         if (d->type == &mstrHashDictTypeWithHFE) {
             ebDefragFunctions eb_defragfns = {
