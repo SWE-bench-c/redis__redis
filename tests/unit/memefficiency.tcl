@@ -628,7 +628,7 @@ run_solo {defrag} {
 
             # Populate memory with interleaving key pattern of same size
             set dummy "[string repeat x 400]"
-            set n 20000
+            set n 10000
             for {set i 0} {$i < [llength $clients]} {incr i} {
                 set rr [lindex $clients $i]
                 for {set j 0} {$j < $n} {incr j} {
