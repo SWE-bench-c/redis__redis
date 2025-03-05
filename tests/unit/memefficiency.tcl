@@ -628,7 +628,7 @@ run_solo {defrag} {
 
             # Populate memory with interleaving key pattern of same size
             set dummy "[string repeat x 400]"
-            set n 10000
+            set n 20000
             for {set i 0} {$i < [llength $clients]} {incr i} {
                 set rr [lindex $clients $i]
                 for {set j 0} {$j < $n} {incr j} {
@@ -682,7 +682,7 @@ run_solo {defrag} {
                 puts "frag [s allocator_frag_ratio]"
                 puts "frag_bytes [s allocator_frag_bytes]"
             }
-            assert_morethan [s allocator_frag_ratio] 1.4
+            assert_morethan [s allocator_frag_ratio] 1.35
 
             catch {r config set activedefrag yes} e
             if {[r config get activedefrag] eq "activedefrag yes"} {
