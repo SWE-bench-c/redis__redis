@@ -407,7 +407,8 @@ void activeDefragHfieldDictCallback(void *privdata, const dictEntry *de) {
         /* If the hfield does not have TTL, we directly defrag it. */
         activeDefragHfield(hf, d);
     } else {
-        /* do other place */
+        /* Skip fields with TTL here, they will be defragmented later during 
+         * the hash expiry ebuckets defragmentation phase. */
     }
 }
 
@@ -442,13 +443,18 @@ void activeDefragHfieldDict(dict *d) {
                                 &defragfns, d);
     } while (cursor != 0);
 
-    cursor = 0;
-    ebDefragFunctions eb_defragfns = {
-        .defragAlloc = activeDefragAlloc,
-        .defragItem = activeDefragHfield
-    };
-    ebuckets *eb = hashTypeGetDictMetaHFE(d);
-    while (ebDefrag(eb, &hashFieldExpireBucketsType, &cursor, &eb_defragfns, d)) {}
+    /* Continue with defragmentation of hash fields that have with TTL.
+     * During the dictionary defragmentaion above, we skipped fields with TTL,
+     * Now we continue to defrag those fields by using the expiry buckets. */
+    if (d->type == &mstrHashDictTypeWithHFE) {
+        cursor = 0;
+        ebDefragFunctions eb_defragfns = {
+            .defragAlloc = activeDefragAlloc,
+            .defragItem = activeDefragHfield
+        };
+        ebuckets *eb = hashTypeGetDictMetaHFE(d);
+        while (ebDefrag(eb, &hashFieldExpireBucketsType, &cursor, &eb_defragfns, d)) {}
+    }
 }
 
 /* Defrag a list of ptr, sds or robj string values */
@@ -590,7 +596,7 @@ void scanLaterHash(robj *ob, unsigned long *cursor) {
     if (!*cursor || defrag_phase == HASH_DEFRAG_NONE)
         defrag_phase = HASH_DEFRAG_DICT;
 
-    if (defrag_phase == HASH_DEFRAG_NONE) {
+    if (defrag_phase == HASH_DEFRAG_DICT) {
         dictDefragFunctions defragfns = {
             .defragAlloc = activeDefragAlloc,
             .defragKey = NULL, /* Will be defragmented in activeDefragHfieldDictCallback. */
