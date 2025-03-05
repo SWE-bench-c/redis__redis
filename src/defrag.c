@@ -578,12 +578,42 @@ void scanLaterHash(robj *ob, unsigned long *cursor) {
     if (ob->type != OBJ_HASH || ob->encoding != OBJ_ENCODING_HT)
         return;
     dict *d = ob->ptr;
-    dictDefragFunctions defragfns = {
-        .defragAlloc = activeDefragAlloc,
-        .defragKey = NULL, /* Will be defragmented in activeDefragHfieldDictCallback. */
-        .defragVal = (dictDefragAllocFunction *)activeDefragSds
-    };
-    *cursor = dictScanDefrag(d, *cursor, activeDefragHfieldDictCallback, &defragfns, d);
+
+    typedef enum {
+        HASH_DEFRAG_NONE = 0,
+        HASH_DEFRAG_DICT = 1,
+        HASH_DEFRAG_EBUCKETS = 2
+    } hashDefragPhase;
+    static hashDefragPhase defrag_phase = HASH_DEFRAG_NONE;
+
+    /* Start a new hash defrag. */
+    if (!*cursor || defrag_phase == HASH_DEFRAG_NONE)
+        defrag_phase = HASH_DEFRAG_DICT;
+
+    if (defrag_phase == HASH_DEFRAG_NONE) {
+        dictDefragFunctions defragfns = {
+            .defragAlloc = activeDefragAlloc,
+            .defragKey = NULL, /* Will be defragmented in activeDefragHfieldDictCallback. */
+            .defragVal = (dictDefragAllocFunction *)activeDefragSds
+        };
+        *cursor = dictScanDefrag(d, *cursor, activeDefragHfieldDictCallback, &defragfns, d);
+        if (!*cursor) defrag_phase = HASH_DEFRAG_EBUCKETS;
+    }
+
+    if (defrag_phase == HASH_DEFRAG_EBUCKETS) {
+        if (d->type == &mstrHashDictTypeWithHFE) {
+            ebDefragFunctions eb_defragfns = {
+                .defragAlloc = activeDefragAlloc,
+                .defragItem = activeDefragHfield
+            };
+            ebuckets *eb = hashTypeGetDictMetaHFE(d);
+            ebDefrag(eb, &hashFieldExpireBucketsType, cursor, &eb_defragfns, d);
+        } else {
+            /* Finish defragmentation if this dict doesn't have expired fileds. */
+            *cursor = 0;
+        }
+        if (!*cursor) defrag_phase = HASH_DEFRAG_NONE;
+    }
 }
 
 void defragQuicklist(defragKeysCtx *ctx, dictEntry *kde) {
