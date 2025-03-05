@@ -1413,7 +1413,7 @@ invalid:
 
 /* PFADD var ele ele ele ... ele => :0 or :1 */
 void pfaddCommand(client *c) {
-    
+    uint64_t oldLen;
     kvobj *kv = lookupKeyWrite(c->db,c->argv[1]);
     struct hllhdr *hdr;
     int updated = 0, j;
@@ -1429,6 +1429,8 @@ void pfaddCommand(client *c) {
         if (isHLLObjectOrReply(c,kv) != C_OK) return;
         kv = dbUnshareStringValue(c->db,c->argv[1],kv);
     }
+    oldLen = stringObjectLen(kv);
+
     /* Perform the low level ADD operation for every element. */
     for (j = 2; j < c->argc; j++) {
         int retval = hllAdd(kv, (unsigned char*)c->argv[j]->ptr,
@@ -1448,6 +1450,7 @@ void pfaddCommand(client *c) {
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,"pfadd",c->argv[1],c->db->id);
         server.dirty += updated;
+        updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr), OBJ_STRING, oldLen, stringObjectLen(kv));
     }
     addReply(c, updated ? shared.cone : shared.czero);
 }
@@ -1593,6 +1596,8 @@ void pfmergeCommand(client *c) {
         kv = dbUnshareStringValue(c->db,c->argv[1],kv);
     }
 
+    uint64_t oldLen = stringObjectLen(kv);
+
     /* Convert the destination object to dense representation if at least
      * one of the inputs was dense. */
     if (use_dense && hllSparseToDense(kv) == C_ERR) {
@@ -1623,6 +1628,9 @@ void pfmergeCommand(client *c) {
     /* We generate a PFADD event for PFMERGE for semantical simplicity
      * since in theory this is a mass-add of elements. */
     notifyKeyspaceEvent(NOTIFY_STRING,"pfadd",c->argv[1],c->db->id);
+
+    updateKeysizesHist(c->db, getKeySlot(c->argv[1]->ptr),
+                       OBJ_STRING, oldLen, stringObjectLen(kv));
     server.dirty++;
     addReply(c,shared.ok);
 }

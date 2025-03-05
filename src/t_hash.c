@@ -775,6 +775,11 @@ GetFieldRes hashTypeGetValue(redisDb *db, kvobj *kv, sds field, unsigned char **
     propagateHashFieldDeletion(db, key, field, sdslen(field));
     server.stat_expired_subkeys++;
 
+    if (!(hfeFlags & HFE_LAZY_NO_UPDATE_KEYSIZES)) {
+        uint64_t l = hashTypeLength(kv, 0);
+        updateKeysizesHist(db, getKeySlot(key), OBJ_HASH, l+1, l);
+    }
+
     /* If the field is the last one in the hash, then the hash will be deleted */
     res = GETF_EXPIRED;
     robj *keyObj = createStringObject(key, sdslen(key));
@@ -2349,7 +2354,8 @@ void hsetexCommand(client *c) {
             sds field = c->argv[first_field_pos + (i * 2)]->ptr;
             const int opt = HFE_LAZY_NO_NOTIFICATION |
                             HFE_LAZY_NO_SIGNAL |
-                            HFE_LAZY_AVOID_HASH_DEL;
+                            HFE_LAZY_AVOID_HASH_DEL |
+                            HFE_LAZY_NO_UPDATE_KEYSIZES;
             int exists = hashTypeExists(c->db, kv, field, opt, NULL);
             found += (exists != 0);
 
@@ -2652,7 +2658,8 @@ void hgetdelCommand(client *c) {
     for (int i = 4; i < c->argc; i++) {
         const int flags = HFE_LAZY_NO_NOTIFICATION |
                           HFE_LAZY_NO_SIGNAL |
-                          HFE_LAZY_AVOID_HASH_DEL;
+                          HFE_LAZY_AVOID_HASH_DEL |
+                          HFE_LAZY_NO_UPDATE_KEYSIZES;
         res = addHashFieldToReply(c, kv, c->argv[i]->ptr, flags);
         expired += (res == GETF_EXPIRED);
         /* Try to delete only if it's found and not expired lazily. */
@@ -2773,7 +2780,8 @@ void hgetexCommand(client *c) {
     for (int i = num_fields_pos + 1; i < c->argc; i++) {
         const int flags = HFE_LAZY_NO_NOTIFICATION |
                           HFE_LAZY_NO_SIGNAL |
-                          HFE_LAZY_AVOID_HASH_DEL;
+                          HFE_LAZY_AVOID_HASH_DEL |
+                          HFE_LAZY_NO_UPDATE_KEYSIZES;
         sds field = c->argv[i]->ptr;
         int res = addHashFieldToReply(c, kv, field, flags);
         expired += (res == GETF_EXPIRED);
