@@ -1874,6 +1874,7 @@ int ebDefragRax(ebuckets *eb, EbucketsType *type, unsigned long *cursor, ebDefra
         ExpireMeta *preLastIter = NULL;
         while (1) {
             unsigned int numItems = mHead->numItems;
+            assert(numItems);  /* Avoid compiler warning with old build chain. */
             ExpireMeta *prevIter = NULL;
             for (unsigned int i = 0; i < numItems; ++i) {
                 if ((newiter = defragfns->defragItem(iter, privdata))) {
