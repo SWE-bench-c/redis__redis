@@ -296,7 +296,11 @@ run_solo {defrag} {
             r config set maxmemory 0
             r config set list-max-ziplist-size 5 ;# list of 10k items will have 2000 quicklist nodes
             r config set stream-node-max-entries 5
-            r hmset hash h1 v1 h2 v2 h3 v3
+            r config set hash-max-listpack-entries 10
+            r hmset hash_lp h1 v1 h2 v2 h3 v3
+            assert_encoding listpack hash_lp
+            r hmset hash_ht h1 v1 h2 v2 h3 v3 h4 v4 h5 v5 h6 v6 h7 v7 h8 v8 h9 v9 h10 v10 h11 v11
+            assert_encoding hashtable hash_ht
             r lpush list a b c d
             r zadd zset 0 a 1 b 2 c 3 d
             r sadd set a b c d
@@ -346,7 +350,7 @@ run_solo {defrag} {
             for {set j 0} {$j < 500000} {incr j} {
                 $rd read ; # Discard replies
             }
-            assert_equal [r dbsize] 500015
+            assert_equal [r dbsize] 500016
 
             # create some fragmentation
             for {set j 0} {$j < 500000} {incr j 2} {
@@ -355,7 +359,7 @@ run_solo {defrag} {
             for {set j 0} {$j < 500000} {incr j 2} {
                 $rd read ; # Discard replies
             }
-            assert_equal [r dbsize] 250015
+            assert_equal [r dbsize] 250016
 
             # start defrag
             after 120 ;# serverCron only updates the info once in 100ms
@@ -590,7 +594,7 @@ run_solo {defrag} {
                 }
 
                 # wait for the active defrag to stop working
-                wait_for_defrag_stop 500 100 1.5
+                wait_for_defrag_stop 500 100 1.2
 
                 # test the fragmentation is lower
                 after 120 ;# serverCron only updates the info once in 100ms

@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <string.h>
 #include "zmalloc.h"
 #include "redisassert.h"
 #include "config.h"
@@ -1806,66 +1807,137 @@ void ebValidate(ebuckets eb, EbucketsType *type) {
         ebValidateRax(ebGetRaxPtr(eb), type);
 }
 
-/* Reallocates the memory used by the item using the provided allocation function.
- * This feature was added for the active defrag feature.
- *
- * The 'defragfn' callbacks are called with a pointer to memory that callback
- * can reallocate. The callbacks should return a new memory address or NULL,
- * where NULL means that no reallocation happened and the old memory is still valid.
- * 
- * Note: It is the caller's responsibility to ensure that the item has a valid expire time. */
-eItem ebDefragItem(ebuckets *eb, EbucketsType *type, eItem item, ebDefragFunction *defragfn) {
-    assert(!ebIsEmpty(*eb));
-    if (ebIsList(*eb)) {
-        ExpireMeta *prevem = NULL;
-        eItem curitem = ebGetListPtr(type, *eb);
-        while (curitem != NULL) {
-            if (curitem == item) {
-                if ((curitem = defragfn(curitem))) {
-                    if (prevem)
-                        prevem->next = curitem;
-                    else
-                        *eb = ebMarkAsList(curitem);
-                }
-                return curitem;
-            }
-
-            /* Move to the next item in the list. */
-            prevem = type->getExpireMeta(curitem);
-            curitem = prevem->next;
-        }
-    } else {
-        CommonSegHdr *currHdr;
-        ExpireMeta *mIter = type->getExpireMeta(item);
-        assert(mIter->trash != 1);
-        while (mIter->lastInSegment == 0)
-            mIter = type->getExpireMeta(mIter->next);
-
-        if (mIter->lastItemBucket)
-            currHdr = (CommonSegHdr *) mIter->next;
-        else  
-            currHdr = (CommonSegHdr *) ((NextSegHdr *) mIter->next)->prevSeg;
-        /* If the item is the first in the segment, then update the segment header */
-        if (currHdr->head == item) {
-            if ((item = defragfn(item))) {
-                currHdr->head = item;
-            }
-            return item;
-        }
-
-        /* Iterate over all items in the segment until the next is 'item' */
-        ExpireMeta *mHead = type->getExpireMeta(currHdr->head);
-        mIter = mHead;
-        while (mIter->next != item)
-            mIter = type->getExpireMeta(mIter->next);
-        assert(mIter->next == item);
-
-        if ((item = defragfn(item))) {
-            mIter->next = item;
-        }
-        return item;
+/* Defrag callback for radix tree iterator, called for each node,
+ * used in order to defrag the nodes allocations. */
+int ebDefragRaxNode(raxNode **noderef, void *privdata) {
+    ebDefragFunctions *defragfns = privdata;
+    raxNode *newnode = defragfns->defragAlloc(*noderef);
+    if (newnode) {
+        *noderef = newnode;
+        return 1;
     }
-    redis_unreachable();
+    return 0;
+}
+
+void ebDefragList(ebuckets *eb, EbucketsType *type, ebDefragFunctions *defragfns, void *privdata) {
+    ExpireMeta *prevem = NULL;
+    eItem newitem, curitem = ebGetListPtr(type, *eb);
+    while (curitem != NULL) {
+        if ((newitem = defragfns->defragItem(curitem, privdata))) {
+            curitem = newitem;
+            if (prevem) {
+                prevem->next = curitem;
+            } else {
+                *eb = ebMarkAsList(curitem);
+            }
+        }
+        /* Move to the next item in the list. */
+        prevem = type->getExpireMeta(curitem);
+        curitem = prevem->next;
+    }
+}
+
+int ebDefragRax(ebuckets *eb, EbucketsType *type, unsigned long *cursor, ebDefragFunctions *defragfns, void *privdata) {
+    rax *rax = ebGetRaxPtr(*eb);
+    raxIterator ri;
+    static unsigned char last[EB_KEY_SIZE];
+
+    raxStart(&ri,rax);
+    if (!*cursor) {
+        ebDefragRaxNode(&rax->head, defragfns);
+        /* assign the iterator node callback before the seek, so that the
+         * initial nodes that are processed till the first item are covered */
+        ri.node_cb = ebDefragRaxNode;
+        ri.privdata = defragfns;
+        raxSeek(&ri,"^",NULL,0);
+    } else {
+        /* if cursor is non-zero, we seek to the static 'last' */
+        if (!raxSeek(&ri,">", last, EB_KEY_SIZE)) {
+            *cursor = 0;
+            raxStop(&ri);
+            return 0;
+        }
+        /* assign the iterator node callback after the seek, so that the
+         * initial nodes that are processed till now aren't covered */
+        ri.node_cb = ebDefragRaxNode;
+        ri.privdata = defragfns;
+    }
+
+    (*cursor)++;
+    if (raxNext(&ri)) {
+        FirstSegHdr *firstSegHdr = ri.data;
+        eItem newiter, iter = firstSegHdr->head;;
+        ExpireMeta *mIter, *mHead;
+
+        mHead = type->getExpireMeta(iter);
+        CommonSegHdr *newSegHdr, *currentSegHdr = (CommonSegHdr*)firstSegHdr;
+        ExpireMeta *preLastIter = NULL;
+        while (1) {
+            unsigned int numItems = mHead->numItems;
+            assert(numItems);  /* Avoid compiler warning with old build chain. */
+            ExpireMeta *prevIter = NULL;
+            for (unsigned int i = 0; i < numItems; ++i) {
+                if ((newiter = defragfns->defragItem(iter, privdata))) {
+                    iter = newiter;
+
+                    if (prevIter == NULL) {
+                        /* If this is the first item in the segment, update the segment
+                         * header to point to the new item location. */
+                        currentSegHdr->head = iter;
+                    } else {
+                        /* Update the previous item's next pointer to point to the newly defragmented item */
+                        prevIter->next = iter;
+                    }
+                }
+                mIter = type->getExpireMeta(iter);
+                prevIter = mIter;
+                iter = mIter->next;
+            }
+
+            if ((newSegHdr = defragfns->defragAlloc(currentSegHdr))) {
+                if (currentSegHdr == ri.data) {
+                    /* If the first segment is updated, need to update the rax data. */
+                    raxSetData(ri.node, ri.data=newSegHdr);
+                } else {
+                    /* For non-first segments, update the next pointer of previous
+                     * item to point to the newly defragmented segment. */
+                    preLastIter->next = newSegHdr;
+                }
+                currentSegHdr = newSegHdr;
+            }
+
+            preLastIter = mIter;
+            if (mIter->lastItemBucket) {
+                mIter->next = currentSegHdr; /* The last eitem needs to point back to the segment. */
+                break;
+            }
+
+            NextSegHdr *nextSegHdr = mIter->next;
+            nextSegHdr->prevSeg = currentSegHdr; /* If not the last segment, update the prevSeg
+                                                  * pointer to the newly defragged segment. */
+            iter = nextSegHdr->head;
+            mHead = type->getExpireMeta(iter);
+        }
+
+        assert(ri.key_len==sizeof(last));
+        memcpy(last,ri.key,ri.key_len);
+        raxStop(&ri);
+        return 1;
+    }
+    raxStop(&ri);
+    *cursor = 0;
+    return 0; 
+}
+
+int ebDefrag(ebuckets *eb, EbucketsType *type, unsigned long *cursor, ebDefragFunctions *defragfns, void *privdata) {
+    if (ebIsEmpty(*eb)) return 0;
+
+    if (ebIsList(*eb)) {
+        ebDefragList(eb, type, defragfns, privdata);
+        return 0;
+    } else {
+        return ebDefragRax(eb, type, cursor, defragfns, privdata);
+    }
 }
 
 /* Retrieves the expiration time associated with the given item. If associated
@@ -2165,11 +2237,21 @@ void distributeTest(int lowestTime,
 #define UNUSED(x) (void)(x)
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-eItem defragCallback(const eItem item) {
-    size_t size = zmalloc_usable_size(item);
-    eItem newitem = zmalloc(size);
-    memcpy(newitem, item, size);
-    zfree(item);
+void *defragCallback(void *ptr) {
+    size_t size = zmalloc_usable_size(ptr);
+    void *newitem = zmalloc(size);
+    memcpy(newitem, ptr, size);
+    zfree(ptr);
+    return newitem;
+}
+
+void *defragItemCallback(void *ptr, void *privdata) {
+    MyItem *item = ptr;
+    MyItem **items = privdata;
+    int index = item->index;
+    void *newitem = defragCallback(ptr);
+    if (newitem)
+        items[index] = newitem;
     return newitem;
 }
 
@@ -2560,14 +2642,13 @@ int ebucketsTest(int argc, char **argv, int flags) {
             }
             assert((s <= EB_LIST_MAX_ITEMS) ? ebIsList(eb) : !ebIsList(eb));
             /* Defrag all the items. */
-            for (int i = 0; i < s; i++) {
-                MyItem *newitem = ebDefragItem(&eb, &myEbucketsType, items[i], defragCallback);
-                if (newitem) items[i] = newitem;
-            }
-            /* Verify that the data is not corrupted. */
+            unsigned long cursor;
+            ebDefragFunctions defragfns = {
+                .defragAlloc = defragCallback,
+                .defragItem = defragItemCallback,
+            };
+            while (ebDefrag(&eb, &myEbucketsType, &cursor, &defragfns, items)) {}
             ebValidate(eb, &myEbucketsType);
-            for (int i = 0; i < s; i++)
-                assert(items[i]->index == i);
             ebDestroy(&eb, &myEbucketsType, NULL);
         }
     }
