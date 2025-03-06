@@ -1248,18 +1248,17 @@ static doneStatus defragStageExpiresKvstore(void *ctx, monotime endtime) {
         scanCallbackCountScanned, NULL, &defragfns);
 }
 
-void *activeDefragHExpiresStringOB(void *ptr, void *privdata) {
+void *activeDefragHExpiresOB(void *ptr, void *privdata) {
     robj *ob = ptr;
     redisDb *db = privdata;
     serverAssert(ob->type == OBJ_HASH);
 
-    if ((ob = activeDefragStringObEx(ob, 1))) {
+    if ((ob = activeDefragAlloc(ob))) {
         sds keystr;
         if (ob->encoding == OBJ_ENCODING_LISTPACK_EX) {
             keystr = ((listpackEx*)ob->ptr)->key;
         } else {
             serverAssert(ob->encoding == OBJ_ENCODING_HT);
-    
             dict *d = ob->ptr;
             dictExpireMetadata *dictExpireMeta = (dictExpireMetadata *) dictMetadata(d);
             keystr = dictExpireMeta->key;
@@ -1284,7 +1283,7 @@ static doneStatus defragStageHExpires(void *ctx, monotime endtime) {
 
     ebDefragFunctions eb_defragfns = {
         .defragAlloc = activeDefragAlloc,
-        .defragItem = activeDefragHExpiresStringOB
+        .defragItem = activeDefragHExpiresOB
     };
     while (1) {
         if (++iterations > 16 && getMonotonicUs() >= endtime) break;

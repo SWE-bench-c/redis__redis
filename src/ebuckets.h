@@ -306,8 +306,8 @@ int ebNextBucket(EbucketsIterator *iter);
 typedef void *(ebDefragAllocFunction)(void *ptr);
 typedef void *(ebDefragAllocItemFunction)(void *ptr, void *privdata);
 typedef struct {
-    ebDefragAllocFunction *defragAlloc; /* Used for entries etc. */
-    ebDefragAllocItemFunction *defragItem;  /* Defrag-realloc keys (optional) */
+    ebDefragAllocFunction *defragAlloc; /* Used for rax nodes, segment etc. */
+    ebDefragAllocItemFunction *defragItem;  /* Defrag-realloc eitem */
 } ebDefragFunctions;
 int ebDefrag(ebuckets *eb, EbucketsType *type, unsigned long *cursor, ebDefragFunctions *defragfns, void *privdata);
 
