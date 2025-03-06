@@ -163,7 +163,7 @@ typedef struct raxIterator {
     raxNode *node;          /* Current node. Only for unsafe iteration. */
     raxStack stack;         /* Stack used for unsafe iteration. */
     raxNodeCallback node_cb; /* Optional node callback. Normally set to NULL. */
-    void *privdata;
+    void *privdata;         /* Optional private data for node callback. */
 } raxIterator;
 
 /* Exported API. */

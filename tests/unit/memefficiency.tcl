@@ -898,7 +898,7 @@ run_solo {defrag} {
                     }
 
                     # wait for the active defrag to stop working
-                    wait_for_defrag_stop 500 100 1.2
+                    wait_for_defrag_stop 500 100 1.1
 
                     # test the fragmentation is lower
                     after 120 ;# serverCron only updates the info once in 100ms
